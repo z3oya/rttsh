@@ -59,6 +59,25 @@ internal static class Program
         TerminalUi? ui = interactive && options.Tui ? TerminalUi.TryCreate(ConsoleLock) : null;
         ui?.Layout();
 
+        // PowerShell can write and close a short stdin pipe before J-Link/OpenEx finishes.
+        // Consume the redirected script before opening the native DLL; otherwise Console.In
+        // can race the DLL initialization and report EOF even though PowerShell wrote lines.
+        List<string>? redirectedLines = null;
+        if (!interactive)
+        {
+            redirectedLines = [];
+            try
+            {
+                while (Console.ReadLine() is { } line)
+                    redirectedLines.Add(line);
+            }
+            catch (IOException ex)
+            {
+                Console.Error.WriteLine($"rtt-cli: cannot read redirected input: {ex.Message}");
+                return 1;
+            }
+        }
+
         try
         {
             using var renderer = new RttRenderer(options, Console.Out, ConsoleLock, ui);
@@ -83,24 +102,52 @@ internal static class Program
             Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
             byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
 
+            void SendInputLine(string line)
+            {
+                if (line.Length == 0) return;
+                byte[] payload = [.. encoding.GetBytes(line), .. eol];
+                try
+                {
+                    transport.Write(payload);
+                }
+                catch (IOException ex)
+                {
+                    WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
+                    exitCode.Value = 1;
+                    throw;
+                }
+            }
+
             // Line input runs on a background thread so the main thread stays wakeable.
             if (interactive) Console.TreatControlCAsInput = true;
             var inputThread = new Thread(() =>
             {
-                while (ReadLine(interactive, ui) is { } line)
+                try
                 {
-                    if (line.Length == 0) continue;
-                    byte[] payload = [.. encoding.GetBytes(line), .. eol];
-                    try
+                    if (redirectedLines is not null)
                     {
-                        transport.Write(payload);
+                        foreach (var line in redirectedLines)
+                            SendInputLine(line);
                     }
-                    catch (IOException ex)
+                    else
                     {
-                        WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
-                        exitCode.Value = 1;
-                        break;
+                        while (ReadLine(interactive, ui) is { } line)
+                            SendInputLine(line);
                     }
+
+                    // A piped script reaches EOF as soon as PowerShell writes it. Give the
+                    // target a short window to echo/reply before tearing down the J-Link link;
+                    // otherwise the reply is still in flight when RTT stops.
+                    if (redirectedLines is not null && exitCode.Value == 0)
+                    {
+                        int waitMs = options.WaitMs ?? 500;
+                        if (waitMs > 0)
+                            done.Wait(waitMs);
+                    }
+                }
+                catch (IOException)
+                {
+                    // SendInputLine has already reported the failed write.
                 }
                 done.Set();   // Ctrl+C in the editor, stdin EOF, or a failed write
             })
@@ -330,7 +377,8 @@ internal static class Program
                                     pinned to the bottom (off by default; needs a VT terminal)
 
             Other:
-              --wait <ms>         (send) print received bytes for this long before exiting
+              --wait <ms>         (send / redirected monitor) print received bytes for this
+                                  long before exiting; redirected monitor defaults to 500 ms
               --help              this help
 
             Exit codes: 0 ok, 1 runtime failure, 2 usage error.
