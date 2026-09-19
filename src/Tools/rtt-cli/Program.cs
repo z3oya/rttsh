@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Toolbox.Core.Rtt;
@@ -39,6 +40,7 @@ internal static class Program
     private static int Run(RttCommand command) => command switch
     {
         HelpCommand => PrintHelp(),
+        VersionCommand => PrintVersion(),
         UsageErrorCommand c => UsageError(c.Message),
         ListDevicesCommand c => ListDevices(c),
         MonitorCommand c => Monitor(c.Options),
@@ -81,7 +83,7 @@ internal static class Program
         try
         {
             using var renderer = new RttRenderer(options, Console.Out, ConsoleLock, ui);
-            WireEvents(transport, renderer, done, exitCode, ui);
+            WireEvents(transport, renderer, done, exitCode, ui, options.Verbose);
 
             try
             {
@@ -195,7 +197,7 @@ internal static class Program
         using var done = new ManualResetEventSlim(false);
         var exitCode = new StrongBox<int>();
 
-        WireEvents(transport, renderer, done, exitCode, ui: null);
+        WireEvents(transport, renderer, done, exitCode, ui: null, options.Verbose);
 
         try
         {
@@ -216,12 +218,15 @@ internal static class Program
     }
 
     /// <summary>Shared wiring for both streaming commands: data into the renderer, DLL chatter
-    /// into the log region (or stderr in plain mode), and every failure path converging on
-    /// `done` (never Environment.Exit - see the class doc). Ctrl+Break also lands on `done`.
-    /// StrongBox because the input thread writes the exit code too.</summary>
-    private static void WireEvents(JLinkRttTransport transport, RttRenderer renderer, ManualResetEventSlim done, StrongBox<int> exitCode, TerminalUi? ui)
+    /// into the log region (or stderr in plain mode) when verbose, and every failure path
+    /// converging on `done` (never Environment.Exit - see the class doc). Ctrl+Break also lands
+    /// on `done`. StrongBox because the input thread writes the exit code too.</summary>
+    private static void WireEvents(JLinkRttTransport transport, RttRenderer renderer, ManualResetEventSlim done, StrongBox<int> exitCode, TerminalUi? ui, bool verbose)
     {
-        transport.LogLine += line => WriteSessionLine(ui, line);
+        // Without --verbose the DLL's connection chatter stays unsubscribed; Error events
+        // (runtime failures) are always delivered regardless.
+        if (verbose)
+            transport.LogLine += line => WriteSessionLine(ui, line);
         transport.DataReceived += renderer.OnData;
         // Raised on the poll thread after the transport closed itself; wake the main thread.
         // Same surface as LogLine: in TUI mode stderr would land on the input row, where the
@@ -343,6 +348,13 @@ internal static class Program
         }
     }
 
+    private static int PrintVersion()
+    {
+        string version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "?";
+        Console.WriteLine($"rtt-cli {version}");
+        return 0;
+    }
+
     private static int PrintHelp()
     {
         Console.WriteLine("""
@@ -379,6 +391,9 @@ internal static class Program
             Other:
               --wait <ms>         (send / redirected monitor) print received bytes for this
                                   long before exiting; redirected monitor defaults to 500 ms
+              --verbose           show J-Link connection progress logs (default: quiet;
+                                  runtime errors are always shown)
+              --version, -v       show rtt-cli's own version
               --help              this help
 
             Exit codes: 0 ok, 1 runtime failure, 2 usage error.

@@ -25,6 +25,8 @@ internal sealed class CommandLineOptions
     public bool Hex { get; set; }
     /// <summary>Chat-style monitor layout (log on top, input pinned to the bottom); off by default.</summary>
     public bool Tui { get; set; }
+    /// <summary>Show J-Link connection progress logs; off by default (errors are always shown).</summary>
+    public bool Verbose { get; set; }
     public string? LogFile { get; set; }
     public int? WaitMs { get; set; }
     /// <summary>Substring filter, list-devices only.</summary>
@@ -59,6 +61,7 @@ internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record HelpCommand : RttCommand;
+internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
 
 internal sealed class UsageException(string message) : Exception(message);
@@ -77,6 +80,8 @@ internal static class CommandLine
         {
             case "--help" or "-h" or "help":
                 return new HelpCommand();
+            case "--version" or "-v" or "version":
+                return new VersionCommand();
             case "list-devices":
                 first = 1;
                 break;
@@ -124,6 +129,7 @@ internal static class CommandLine
                 case "--encoding": options.Encoding = ParseEncoding(Next("utf8|ascii|latin1")); break;
                 case "--hex": options.Hex = true; break;
                 case "-tui" or "--tui": options.Tui = true; break;
+                case "--verbose": options.Verbose = true; break;
                 case "--log": options.LogFile = Next("log file"); break;
                 case "--filter": options.DeviceFilter = Next("substring"); break;
                 case "--wait": options.WaitMs = ParseInt(Next("milliseconds"), arg); break;
