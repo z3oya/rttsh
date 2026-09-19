@@ -18,6 +18,8 @@ internal static class JLinkNative
     public const string Connect = "JLINKARM_Connect";
     public const string IsConnected = "JLINKARM_IsConnected";
     public const string Reset = "JLINKARM_Reset";
+    public const string Go = "JLINKARM_Go";
+    public const string IsHalted = "JLINKARM_IsHalted";
     public const string ReadMemEx = "JLINKARM_ReadMemEx";
     public const string RttControl = "JLINK_RTTERMINAL_Control";
     public const string RttRead = "JLINK_RTTERMINAL_Read";
@@ -90,6 +92,8 @@ internal static class JLinkNative
     public delegate int ConnectFn();                            // <0 = failure
     public delegate int IsConnectedFn();
     public delegate int ResetFn();
+    public delegate void GoFn();                                // resume a halted core (return value, if any, is unused - ABI-safe)
+    public delegate int IsHaltedFn();                           // 1 = core halted
     public delegate int ReadMemExFn(uint address, uint size, byte[] buffer, uint access);
     public delegate int RttControlStartFn(int command, ref RttStartConfig config);
     public delegate int RttControlStopFn(int command, IntPtr config);   // STOP ignores config; NULL matches the reference tool

@@ -50,7 +50,7 @@ internal static class Program
 
     private static int Monitor(CommandLineOptions options)
     {
-        RttConnectionConfig config = options.ToConnectionConfig(resetDefault: true);
+        RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
         using var transport = new JLinkRttTransport();
         using var renderer = new RttRenderer(options, Console.Out, ConsoleLock);
         using var done = new ManualResetEventSlim(false);
@@ -246,8 +246,9 @@ internal static class Program
               --chip <name>       target device, e.g. STM32H743XI (required for monitor/send)
               --speed <kHz>       interface speed, default 4000
               --if swd|jtag       target interface, default swd
-              --reset             reset the target on connect (monitor default)
-              --no-reset          skip the reset (send default)
+              --reset             reset the target on connect (off by default: J-Link reset
+                                  halts the core briefly; it is resumed automatically)
+              --no-reset          connect without resetting (default for every command)
               --rtt-addr <hex>    known control-block address (default: SDK auto-scan)
               --rtt-range <hex>   byte range searched for the "SEGGER RTT" signature
               --sn <number>       probe USB serial number (default: first probe)

@@ -27,6 +27,8 @@ internal sealed class JLinkLibrary : IDisposable
     public JLinkNative.ConnectFn? Connect { get; private set; }
     public JLinkNative.IsConnectedFn? IsConnected { get; private set; }
     public JLinkNative.ResetFn? Reset { get; private set; }
+    public JLinkNative.GoFn? Go { get; private set; }
+    public JLinkNative.IsHaltedFn? IsHalted { get; private set; }
     public JLinkNative.ReadMemExFn? ReadMemEx { get; private set; }
     public JLinkNative.RttControlStartFn? RttControlStart { get; private set; }
     public JLinkNative.RttControlStopFn? RttControlStop { get; private set; }
@@ -79,7 +81,7 @@ internal sealed class JLinkLibrary : IDisposable
         }
         OpenEx = null; EmuSelectByUsbSn = null; SelectUsb = null; Close = null;
         TifSelect = null; SetSpeed = null; ExecCommand = null; Connect = null;
-        IsConnected = null; Reset = null; ReadMemEx = null;
+        IsConnected = null; Reset = null; Go = null; IsHalted = null; ReadMemEx = null;
         RttControlStart = null; RttControlStop = null; RttRead = null; RttWrite = null;
         DeviceGetInfoCount = null; DeviceGetInfo = null; Core2CoreName = null;
     }
@@ -174,6 +176,8 @@ internal sealed class JLinkLibrary : IDisposable
             Connect = Resolve<JLinkNative.ConnectFn>(JLinkNative.Connect);
             IsConnected = Resolve<JLinkNative.IsConnectedFn>(JLinkNative.IsConnected);
             Reset = Resolve<JLinkNative.ResetFn>(JLinkNative.Reset);
+            Go = Resolve<JLinkNative.GoFn>(JLinkNative.Go);
+            IsHalted = Resolve<JLinkNative.IsHaltedFn>(JLinkNative.IsHalted);
             ReadMemEx = Resolve<JLinkNative.ReadMemExFn>(JLinkNative.ReadMemEx);
             RttControlStart = Resolve<JLinkNative.RttControlStartFn>(JLinkNative.RttControl);
             RttControlStop = Resolve<JLinkNative.RttControlStopFn>(JLinkNative.RttControl);

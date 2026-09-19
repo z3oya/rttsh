@@ -15,6 +15,8 @@ internal sealed class JLinkRttTransport : IRttTransport
     private const int ChannelIndex = 0;
     private const int PollBytes = 8192;
     private const int PollIdleMs = 2;
+    /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
+    private const int IdlePollsPerHaltCheck = 1000;
 
     private readonly JLinkLibrary _lib = new();
     private readonly object _nativeLock = new();
@@ -82,7 +84,17 @@ internal sealed class JLinkRttTransport : IRttTransport
                     throw new IOException($"Failed to connect target (chip={config.Chip}).");
 
                 if (config.ResetOnConnect)
+                {
                     _lib.Reset!();
+                    // J-Link resets halt the core (vector catch: "Halt core after reset"). A halted
+                    // CPU produces no RTT traffic - the stream stalls once the stale buffer content
+                    // from before the reset is drained. Resume it so the firmware actually runs.
+                    if (_lib.IsHalted?.Invoke() == 1)
+                    {
+                        OnLog("Core is halted after reset - resuming via Go().", isError: false);
+                        _lib.Go?.Invoke();
+                    }
+                }
 
                 StartRtt(config);
             }
@@ -128,10 +140,12 @@ internal sealed class JLinkRttTransport : IRttTransport
         return index < 0 ? 0 : start + (uint)index;
     }
 
-    /// <summary>Polls channel 0. A positive read loops immediately (no timer jitter at high rates);
-    /// an empty read idles ~2ms; a negative read fails the link.</summary>
+    /// <summary>Polls channel 0 at a fixed ~2ms cadence (matching the reference tool). A negative
+    /// read fails the link; a stretch of empty reads with a halted core does too - a silent stall
+    /// would otherwise look exactly like a quiet target.</summary>
     private void PollLoop()
     {
+        int idlePolls = 0;
         while (true)
         {
             int read;
@@ -141,28 +155,46 @@ internal sealed class JLinkRttTransport : IRttTransport
                 read = _lib.RttRead!(ChannelIndex, _rxBuffer, PollBytes);
             }
 
+            if (read < 0)
+            {
+                FailLink($"RTT read error (code={read}).");
+                return;
+            }
+
             if (read > 0)
             {
+                idlePolls = 0;
                 var data = new byte[read];
                 Array.Copy(_rxBuffer, data, read);
                 DataReceived?.Invoke(data);
             }
-            else if (read < 0)
+            else if (++idlePolls >= IdlePollsPerHaltCheck)
             {
+                idlePolls = 0;
+                // Only on quiet links, ~1/second at most; IsHalted is a single DAP read.
                 lock (_nativeLock)
                 {
-                    if (!_open) return;   // external Close() won the race; it does the teardown
-                    _open = false;
-                    TeardownDll();
+                    if (_open && _lib.IsHalted?.Invoke() == 1)
+                    {
+                        FailLink("RTT stalled: the target core is halted (debugger attached or reset left it halted). Reconnect with --reset to resume it.");
+                        return;
+                    }
                 }
-                Error?.Invoke(new IOException($"RTT read error (code={read})."));
-                return;
             }
-            else
-            {
-                Thread.Sleep(PollIdleMs);
-            }
+            Thread.Sleep(PollIdleMs);
         }
+    }
+
+    /// <summary>Closes the link from the poll thread (it owns the failure path) and raises Error.</summary>
+    private void FailLink(string message)
+    {
+        lock (_nativeLock)
+        {
+            if (!_open) return;   // external Close() won the race; it does the teardown
+            _open = false;
+            TeardownDll();
+        }
+        Error?.Invoke(new IOException(message));
     }
 
     public void Write(ReadOnlySpan<byte> data)
