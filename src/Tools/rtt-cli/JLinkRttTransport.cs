@@ -17,6 +17,8 @@ internal sealed class JLinkRttTransport : IRttTransport
     private const int PollIdleMs = 2;
     /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
     private const int IdlePollsPerHaltCheck = 1000;
+    private const int WriteRetryDeadlineMs = 1500;
+    private const int WriteRetryDelayMs = 25;
 
     private readonly JLinkLibrary _lib = new();
     private readonly object _nativeLock = new();
@@ -197,6 +199,11 @@ internal sealed class JLinkRttTransport : IRttTransport
         Error?.Invoke(new IOException(message));
     }
 
+    /// <summary>Writes to the down channel, retrying briefly when the DLL reports a full
+    /// buffer: right after RTT START its buffer view has not settled yet (an immediate write
+    /// reports 0 written), and a paused target stops draining the down channel. One attempt
+    /// per delay under the native lock, until the deadline; then the payload is dropped with
+    /// a clear error rather than silently.</summary>
     public void Write(ReadOnlySpan<byte> data)
     {
         if (data.Length == 0) return;
@@ -204,11 +211,21 @@ internal sealed class JLinkRttTransport : IRttTransport
         lock (_nativeLock)
         {
             if (!_open) throw new IOException("The RTT link is not open.");
-            int written = _lib.RttWrite!(ChannelIndex, buffer, buffer.Length);
-            if (written < 0)
-                throw new IOException($"RTT write failed (code={written}).");
-            if (written < buffer.Length)
-                OnLog($"RTT down-buffer full: wrote {written}/{buffer.Length} bytes", isError: true);
+            int written = 0;
+            long deadline = Environment.TickCount64 + WriteRetryDeadlineMs;
+            while (true)
+            {
+                var chunk = written == 0 ? buffer : buffer[written..];
+                int n = _lib.RttWrite!(ChannelIndex, chunk, chunk.Length);
+                if (n < 0)
+                    throw new IOException($"RTT write failed (code={n}).");
+                written += n;
+                if (written >= buffer.Length) return;
+                if (!_open) throw new IOException("The RTT link is not open.");
+                if (Environment.TickCount64 >= deadline)
+                    throw new IOException($"RTT down-buffer stays full (wrote {written}/{buffer.Length} bytes) - is the target reading the down channel?");
+                Thread.Sleep(WriteRetryDelayMs);
+            }
         }
     }
 

@@ -136,6 +136,12 @@ internal static class Program
         CommandLineOptions options = command.Options;
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
         byte[] payload = EncodePayload(command.Payload, options);
+        // Line targets need a terminator to execute; --hex sends raw bytes untouched.
+        if (!options.Hex)
+        {
+            Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
+            payload = [.. payload, .. encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf))];
+        }
 
         using var transport = new JLinkRttTransport();
         using var renderer = new RttRenderer(options, Console.Out, ConsoleLock);
@@ -194,7 +200,34 @@ internal static class Program
                 throw new UsageException($"--hex: {error}");
             return bytes;
         }
-        return TextCodec.Resolve(options.EffectiveEncoding).GetBytes(payload);
+        return TextCodec.Resolve(options.EffectiveEncoding).GetBytes(UnescapeSendText(payload));
+    }
+
+    /// <summary>Interprets \n \r \t \\ in send text: shell quoting for a literal newline varies
+    /// (PowerShell needs `n), and C-style escapes are what users naturally type. Unknown
+    /// escapes stay as-is.</summary>
+    private static string UnescapeSendText(string text)
+    {
+        var sb = new StringBuilder(text.Length);
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c != '\\' || i + 1 >= text.Length)
+            {
+                sb.Append(c);
+                continue;
+            }
+            char next = text[++i];
+            switch (next)
+            {
+                case 'n': sb.Append('\n'); break;
+                case 'r': sb.Append('\r'); break;
+                case 't': sb.Append('\t'); break;
+                case '\\': sb.Append('\\'); break;
+                default: sb.Append(c).Append(next); break;
+            }
+        }
+        return sb.ToString();
     }
 
     // ---- list-devices: dump the DLL device database ----------------------------------
@@ -272,6 +305,7 @@ internal static class Program
               rtt-cli [options]                         interactive terminal (default command)
               rtt-cli list-devices [--filter <text>]    list the J-Link DLL device database
               rtt-cli send <text> [--hex] [options]     send once, optionally wait for a reply
+                                        (text: \n \r \t \\ escapes are interpreted)
 
             Connection options:
               --chip <name>       target device, e.g. STM32H743XI (required for monitor/send)
@@ -286,7 +320,8 @@ internal static class Program
               --dll <path>        JLink DLL path (default: auto-detect, incl. SEGGER roots)
 
             Display options (monitor/send):
-              --eol lf|cr|crlf|none   line ending appended to sent lines (default lf)
+              --eol lf|cr|crlf|none   line ending appended to text sent by monitor input and
+                                    send (default lf; --hex send payloads are raw)
               --encoding utf8|ascii|latin1
                                      decode received bytes (default utf8)
               --hex                 show payload as a 16-byte-per-line hex dump (send: parse payload as hex)
