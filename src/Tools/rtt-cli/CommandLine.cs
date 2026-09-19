@@ -23,6 +23,8 @@ internal sealed class CommandLineOptions
     public TextEncodingKind? Encoding { get; set; }
     public TextEol? Eol { get; set; }
     public bool Hex { get; set; }
+    /// <summary>Chat-style monitor layout (log on top, input pinned to the bottom); off by default.</summary>
+    public bool Tui { get; set; }
     public string? LogFile { get; set; }
     public int? WaitMs { get; set; }
     /// <summary>Substring filter, list-devices only.</summary>
@@ -121,6 +123,7 @@ internal static class CommandLine
                 case "--eol": options.Eol = ParseEol(Next("lf|cr|crlf|none")); break;
                 case "--encoding": options.Encoding = ParseEncoding(Next("utf8|ascii|latin1")); break;
                 case "--hex": options.Hex = true; break;
+                case "-tui" or "--tui": options.Tui = true; break;
                 case "--log": options.LogFile = Next("log file"); break;
                 case "--filter": options.DeviceFilter = Next("substring"); break;
                 case "--wait": options.WaitMs = ParseInt(Next("milliseconds"), arg); break;

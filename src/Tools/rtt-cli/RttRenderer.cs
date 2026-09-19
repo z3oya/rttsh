@@ -14,17 +14,19 @@ internal sealed class RttRenderer : IDisposable
     private readonly object _consoleLock;
     private readonly Decoder _decoder;
     private readonly FileStream? _logStream;
+    private readonly TerminalUi? _ui;
     private readonly bool _hex;
     private readonly char[] _charBuffer = new char[8192];
     private readonly byte[] _hexLine = new byte[16];
     private int _hexPending;
     private bool _disposed;
 
-    public RttRenderer(CommandLineOptions options, TextWriter data, object consoleLock)
+    public RttRenderer(CommandLineOptions options, TextWriter data, object consoleLock, TerminalUi? ui = null)
     {
         _data = data;
         _consoleLock = consoleLock;
         _decoder = TextCodec.Resolve(options.EffectiveEncoding).GetDecoder();
+        _ui = ui;
         _hex = options.Hex;
         if (options.LogFile is { Length: > 0 } path)
             _logStream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, bufferSize: 4 * 1024);
@@ -53,8 +55,15 @@ internal sealed class RttRenderer : IDisposable
         // Char output never exceeds byte count for utf8/ascii/latin1 and a batch is at most
         // 8192 bytes (PollBytes), so the fixed buffer always fits.
         int written = _decoder.GetChars(data, 0, data.Length, _charBuffer, 0, flush: false);
-        _data.Write(_charBuffer, 0, written);
-        _data.Flush();
+        if (_ui is not null)
+        {
+            _ui.WriteLog(new string(_charBuffer, 0, written));   // into the scrolling log region
+        }
+        else
+        {
+            _data.Write(_charBuffer, 0, written);
+            _data.Flush();
+        }
     }
 
     private void RenderHex(byte[] data)
@@ -69,7 +78,13 @@ internal sealed class RttRenderer : IDisposable
         // flushes it on an orderly shutdown.
     }
 
-    private void FlushHexLine() => _data.WriteLine(HexCodec.Format(_hexLine.AsSpan(0, _hexPending)));
+    private void FlushHexLine()
+    {
+        string line = HexCodec.Format(_hexLine.AsSpan(0, _hexPending));
+        if (_ui is not null) _ui.WriteLog(line + "\r\n");
+        else _data.WriteLine(line);
+        _hexPending = 0;
+    }
 
     public void Dispose()
     {

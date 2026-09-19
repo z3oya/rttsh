@@ -52,66 +52,81 @@ internal static class Program
     {
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
         using var transport = new JLinkRttTransport();
-        using var renderer = new RttRenderer(options, Console.Out, ConsoleLock);
         using var done = new ManualResetEventSlim(false);
         var exitCode = new StrongBox<int>();
 
-        WireEvents(transport, renderer, done, exitCode);
+        bool interactive = !Console.IsInputRedirected;
+        TerminalUi? ui = interactive && options.Tui ? TerminalUi.TryCreate(ConsoleLock) : null;
+        ui?.Layout();
 
         try
         {
-            transport.Open(config);
-        }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException)
-        {
-            Console.Error.WriteLine($"rtt-cli: {ex.Message}");
-            return 1;
-        }
+            using var renderer = new RttRenderer(options, Console.Out, ConsoleLock, ui);
+            WireEvents(transport, renderer, done, exitCode, ui);
 
-        if (!Console.IsOutputRedirected)
-        {
-            Console.Error.WriteLine($"RTT terminal on {config.Chip} (channel 0). Type a line + Enter to send; Ctrl+C to exit.");
-        }
-
-        Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
-        byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
-
-        // Line input runs on a background thread so the main thread stays wakeable.
-        bool interactive = !Console.IsInputRedirected;
-        if (interactive) Console.TreatControlCAsInput = true;
-        var inputThread = new Thread(() =>
-        {
-            while (ReadLine(interactive) is { } line)
+            try
             {
-                if (line.Length == 0) continue;
-                byte[] payload = [.. encoding.GetBytes(line), .. eol];
-                try
-                {
-                    transport.Write(payload);
-                }
-                catch (IOException ex)
-                {
-                    WriteDiag($"rtt-cli: {ex.Message}");
-                    exitCode.Value = 1;
-                    break;
-                }
+                transport.Open(config);
             }
-            done.Set();   // Ctrl+C in the editor, stdin EOF, or a failed write
-        })
-        {
-            IsBackground = true,
-            Name = "rtt-input",
-        };
-        inputThread.Start();
+            catch (Exception ex) when (ex is IOException or InvalidOperationException)
+            {
+                Console.Error.WriteLine($"rtt-cli: {ex.Message}");
+                return 1;
+            }
 
-        done.Wait();
-        transport.Close();
-        return exitCode.Value;   // usings dispose renderer (flushes the pending hex line) then transport
+            string banner = $"RTT terminal on {config.Chip} (channel 0). Type a line + Enter to send; Ctrl+C to exit.";
+            if (!Console.IsOutputRedirected)   // TUI implies not redirected; this only trims the stderr branch
+            {
+                WriteSessionLine(ui, banner);
+            }
+
+            Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
+            byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
+
+            // Line input runs on a background thread so the main thread stays wakeable.
+            if (interactive) Console.TreatControlCAsInput = true;
+            var inputThread = new Thread(() =>
+            {
+                while (ReadLine(interactive, ui) is { } line)
+                {
+                    if (line.Length == 0) continue;
+                    byte[] payload = [.. encoding.GetBytes(line), .. eol];
+                    try
+                    {
+                        transport.Write(payload);
+                    }
+                    catch (IOException ex)
+                    {
+                        WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
+                        exitCode.Value = 1;
+                        break;
+                    }
+                }
+                done.Set();   // Ctrl+C in the editor, stdin EOF, or a failed write
+            })
+            {
+                IsBackground = true,
+                Name = "rtt-input",
+            };
+            inputThread.Start();
+
+            done.Wait();
+            transport.Close();   // joins the poll thread before the UI is torn down below
+            return exitCode.Value;
+        }
+        finally
+        {
+            // TreatControlCAsInput flips the SHARED console input mode; leaving it set would
+            // break Ctrl+C in the parent shell after we exit. The VT scroll region is the
+            // same story - reset both on every exit path.
+            if (interactive) Console.TreatControlCAsInput = false;
+            ui?.Dispose();
+        }
     }
 
     /// <summary>One input line. Returns null on Ctrl+C (interactive) or EOF (redirected).</summary>
-    private static string? ReadLine(bool interactive) =>
-        interactive ? (ConsoleInput.TryReadLine(out string? line) ? line : null)
+    private static string? ReadLine(bool interactive, TerminalUi? ui) =>
+        interactive ? (ConsoleInput.TryReadLine(ui, out string? line) ? line : null)
                     : Console.ReadLine();
 
     // ---- send: one-shot payload ------------------------------------------------------
@@ -127,7 +142,7 @@ internal static class Program
         using var done = new ManualResetEventSlim(false);
         var exitCode = new StrongBox<int>();
 
-        WireEvents(transport, renderer, done, exitCode);
+        WireEvents(transport, renderer, done, exitCode, ui: null);
 
         try
         {
@@ -148,17 +163,19 @@ internal static class Program
     }
 
     /// <summary>Shared wiring for both streaming commands: data into the renderer, DLL chatter
-    /// onto stderr, and every failure path converging on `done` (never Environment.Exit - see
-    /// the class doc). Ctrl+Break (and Ctrl+C in environments where the event still dispatches)
-    /// also lands on `done`. StrongBox because the input thread writes the exit code too.</summary>
-    private static void WireEvents(JLinkRttTransport transport, RttRenderer renderer, ManualResetEventSlim done, StrongBox<int> exitCode)
+    /// into the log region (or stderr in plain mode), and every failure path converging on
+    /// `done` (never Environment.Exit - see the class doc). Ctrl+Break also lands on `done`.
+    /// StrongBox because the input thread writes the exit code too.</summary>
+    private static void WireEvents(JLinkRttTransport transport, RttRenderer renderer, ManualResetEventSlim done, StrongBox<int> exitCode, TerminalUi? ui)
     {
-        transport.LogLine += WriteDiag;
+        transport.LogLine += line => WriteSessionLine(ui, line);
         transport.DataReceived += renderer.OnData;
         // Raised on the poll thread after the transport closed itself; wake the main thread.
+        // Same surface as LogLine: in TUI mode stderr would land on the input row, where the
+        // next keystroke's redraw would erase it.
         transport.Error += ex =>
         {
-            WriteDiag($"rtt-cli: {ex.Message}");
+            WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
             exitCode.Value = 1;
             done.Set();
         };
@@ -232,6 +249,20 @@ internal static class Program
         }
     }
 
+    /// <summary>One session-diagnostic line: into the TUI log surface when active, stderr otherwise.
+    /// The split must never be bypassed - raw stderr writes in TUI mode land on the pinned input row.</summary>
+    private static void WriteSessionLine(TerminalUi? ui, string line)
+    {
+        if (ui is not null)
+        {
+            lock (ConsoleLock) ui.WriteLog(line + "\r\n");
+        }
+        else
+        {
+            WriteDiag(line);
+        }
+    }
+
     private static int PrintHelp()
     {
         Console.WriteLine("""
@@ -260,6 +291,8 @@ internal static class Program
                                      decode received bytes (default utf8)
               --hex                 show payload as a 16-byte-per-line hex dump (send: parse payload as hex)
               --log <file>          also append raw received bytes to a file
+              -tui, --tui           (monitor only) chat-style layout: log on top, "> " input
+                                    pinned to the bottom (off by default; needs a VT terminal)
 
             Other:
               --wait <ms>         (send) print received bytes for this long before exiting
