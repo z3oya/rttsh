@@ -23,24 +23,31 @@ internal sealed class LuaScriptHost
     {
         using var lua = new Lua();
         lua.DoString("""
+            local function protect(fn)
+                return function(...)
+                    local ok, res = pcall(fn, ...)
+                    if not ok then error(HOST_describe(res), 2) end
+                    return res
+                end
+            end
             rtt = {
-                send = function(text) HOST_send(text) end,
-                send_hex = function(hex) HOST_send_hex(hex) end,
-                log = function(line) HOST_log(tostring(line)) end,
-                wait = function(ms)
-                    if ms == nil then error('wait: missing timeout in ms', 2) end
+                send = protect(function(text) HOST_send(text) end),
+                send_hex = protect(function(hex) HOST_send_hex(hex) end),
+                log = protect(function(line) HOST_log(tostring(line)) end),
+                wait = protect(function(ms)
+                    if ms == nil then error('wait: missing timeout in ms', 0) end
                     return HOST_wait(math.floor(ms))
-                end,
-                wait_hex = function(ms)
-                    if ms == nil then error('wait_hex: missing timeout in ms', 2) end
+                end),
+                wait_hex = protect(function(ms)
+                    if ms == nil then error('wait_hex: missing timeout in ms', 0) end
                     return HOST_wait_hex(math.floor(ms))
-                end,
-                expect = function(pattern, timeoutMs)
-                    if pattern == nil then error('expect: missing pattern', 2) end
+                end),
+                expect = protect(function(pattern, timeoutMs)
+                    if pattern == nil then error('expect: missing pattern', 0) end
                     return HOST_expect(pattern, math.floor(timeoutMs or 1000))
-                end,
-                now = function() return HOST_now() end,
-                sleep = function(ms) HOST_sleep(math.floor(tonumber(ms) or 0)) end,
+                end),
+                now = protect(function() return HOST_now() end),
+                sleep = protect(function(ms) HOST_sleep(math.floor(tonumber(ms) or 0)) end),
                 exit = function(code) HOST_exit(math.floor(tonumber(code) or 0)) end,
             }
             """);
@@ -53,6 +60,7 @@ internal sealed class LuaScriptHost
         lua["HOST_now"] = new Func<double>(_runtime.Now);
         lua["HOST_sleep"] = new Action<int>(_runtime.Sleep);
         lua["HOST_exit"] = new Action<int>(_runtime.Exit);
+        lua["HOST_describe"] = new Func<object?, string>(Describe);
 
         try
         {
@@ -68,6 +76,13 @@ internal sealed class LuaScriptHost
             throw new ScriptError(FormatLuaError(ex));
         }
     }
+
+    /// <summary>Turns a pcall-captured Lua error into a readable message. CLR exceptions cross
+    /// as LuaScriptException wrappers whose InnerException carries the real ScriptError text;
+    /// plain Lua errors and strings pass through unchanged.</summary>
+    private static string Describe(object? error) =>
+        error is LuaScriptException { InnerException: { } inner } ? inner.Message
+        : error?.ToString() ?? "unknown error";
 
     private static string FormatLuaError(LuaException ex) =>
         ex is LuaScriptException { IsNetException: true, InnerException: { } inner }
