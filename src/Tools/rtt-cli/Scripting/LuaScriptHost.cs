@@ -3,19 +3,23 @@ using NLua.Exceptions;   // LuaException/LuaScriptException live here in NLua 1.
 
 namespace Toolbox.Tools.RttCli.Scripting;
 
-/// <summary>Thin NLua binding over ScriptRuntime: builds the "rtt" table, runs the script file and
-/// maps engine/Lua errors onto ScriptError. The whole script runs on the caller's thread - the
-/// Lua state is never touched from event threads. Lua-side shims coerce/validate arguments so
-/// error messages point at the rtt.* name the script actually wrote.</summary>
+/// <summary>Thin NLua binding over ScriptRuntime: builds the "rtt" table, runs a script source
+/// (file contents or --eval text) and maps engine/Lua errors onto ScriptError. The whole script
+/// runs on the caller's thread - the Lua state is never touched from event threads. Lua-side
+/// shims coerce/validate arguments so error messages point at the rtt.* name the script actually
+/// wrote. chunkName follows Lua conventions: "@path" renders errors as "path:line", "=eval"
+/// renders them as "eval:line".</summary>
 internal sealed class LuaScriptHost
 {
     private readonly ScriptRuntime _runtime;
-    private readonly string _scriptPath;
+    private readonly string _source;
+    private readonly string _chunkName;
 
-    public LuaScriptHost(ScriptRuntime runtime, string scriptPath)
+    public LuaScriptHost(ScriptRuntime runtime, string source, string chunkName)
     {
         _runtime = runtime;
-        _scriptPath = scriptPath;
+        _source = source;
+        _chunkName = chunkName;
     }
 
     /// <summary>Executes the script; returns the exit code (rtt.exit(code) or 0).</summary>
@@ -64,7 +68,7 @@ internal sealed class LuaScriptHost
 
         try
         {
-            lua.DoFile(_scriptPath);
+            lua.DoString(_source, _chunkName);
             return _runtime.ExitCode;
         }
         catch (LuaException ex) when (ex is LuaScriptException { InnerException: ScriptExitSignal signal })

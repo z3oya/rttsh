@@ -63,7 +63,7 @@ internal abstract record RttCommand;
 internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
-internal sealed record ScriptCommand(string ScriptPath, CommandLineOptions Options) : RttCommand;
+internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
 internal sealed record HelpCommand : RttCommand;
 internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
@@ -94,9 +94,15 @@ internal static class CommandLine
                     return new UsageErrorCommand("send: missing <text> payload");
                 return new SendCommand(args[1], ParseOptions(args, 2));
             case "script":
+                if (args.Length >= 2 && args[1] == "--eval")
+                {
+                    if (args.Length < 3)
+                        return new UsageErrorCommand("script: --eval needs the lua source text");
+                    return new ScriptCommand(null, args[2], ParseOptions(args, 3));
+                }
                 if (args.Length < 2 || args[1].StartsWith("--"))
-                    return new UsageErrorCommand("script: missing <file.lua> path");
-                return new ScriptCommand(args[1], ParseOptions(args, 2));
+                    return new UsageErrorCommand("script: missing <file.lua> path (or --eval <code>)");
+                return new ScriptCommand(args[1], null, ParseOptions(args, 2));
             default:
                 if (!args[0].StartsWith("--"))
                     return new UsageErrorCommand($"unknown command '{args[0]}'");

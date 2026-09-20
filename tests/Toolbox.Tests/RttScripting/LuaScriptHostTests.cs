@@ -21,7 +21,7 @@ public class LuaScriptHostTests
         var runtime = new ScriptRuntime(transport, Encoding.UTF8, [(byte)'\n'], log.Add, 0);
         string path = Path.Combine(Path.GetTempPath(), $"rtt-cli-test-{Guid.NewGuid():N}.lua");
         File.WriteAllText(path, script);
-        return new Harness(new LuaScriptHost(runtime, path), transport, runtime, log, path);
+        return new Harness(new LuaScriptHost(runtime, File.ReadAllText(path), "@" + path), transport, runtime, log, path);
     }
 
     [Fact]
@@ -143,5 +143,31 @@ public class LuaScriptHostTests
             assert(rtt.now() - t0 >= 15, 'clock should advance')
             """);
         Assert.Equal(0, h.Host.Run());
+    }
+
+    private sealed record EvalHarness(LuaScriptHost Host, TestRttTransport Transport, ScriptRuntime Runtime, List<string> Log);
+
+    private static EvalHarness MakeEval(string source)
+    {
+        var transport = new TestRttTransport();
+        var log = new List<string>();
+        var runtime = new ScriptRuntime(transport, Encoding.UTF8, [(byte)'\n'], log.Add, 0);
+        return new EvalHarness(new LuaScriptHost(runtime, source, "=eval"), transport, runtime, log);
+    }
+
+    [Fact]
+    public void Eval_source_runs_without_a_file()
+    {
+        var h = MakeEval("rtt.log('inline')");
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["inline"], h.Log);
+    }
+
+    [Fact]
+    public void Eval_errors_carry_the_eval_chunk_name()
+    {
+        var h = MakeEval("error('boom')");
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("eval:1:", ex.Message);
     }
 }

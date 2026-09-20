@@ -233,7 +233,7 @@ internal static class Program
     private static int RunScript(ScriptCommand command)
     {
         CommandLineOptions options = command.Options;
-        if (!File.Exists(command.ScriptPath))
+        if (command.EvalSource is null && !File.Exists(command.ScriptPath))
             throw new UsageException($"script: file not found: {command.ScriptPath}");
         if (options.ScriptTimeoutMs is < 0)
             throw new UsageException("script: --script-timeout must be >= 0 ms (0 = off)");
@@ -270,7 +270,9 @@ internal static class Program
         {
             try
             {
-                var host = new LuaScriptHost(runtime, command.ScriptPath);
+                var host = command.EvalSource is not null
+                    ? new LuaScriptHost(runtime, command.EvalSource, "=eval")
+                    : new LuaScriptHost(runtime, File.ReadAllText(command.ScriptPath!), "@" + command.ScriptPath);
                 exitCode.Value = host.Run();
             }
             catch (ScriptError ex)
@@ -447,6 +449,7 @@ internal static class Program
               rtt-cli send <text> [--hex] [options]     send once, optionally wait for a reply
                                         (text: \n \r \t \\ escapes are interpreted)
               rtt-cli script <file.lua> [options]
+              rtt-cli script --eval '<lua code>' [options]
                                         run a Lua automation script (rtt.* API)
 
             Connection options:
