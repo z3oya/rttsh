@@ -3,19 +3,21 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using Toolbox.Core.Rtt;
 using Toolbox.Core.SerialComm;
+using Toolbox.Tools.RttCli.Scripting;
 
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>Entry point: parse, dispatch (monitor / list-devices / send), exit codes.
 /// Data goes to stdout, every diagnostic to stderr, so stdout stays pipeable.
 ///
-/// Ctrl+C handling: Console.CancelKeyPress is NOT the exit path. Dispatch of that event was
-/// observed to never run while a thread is blocked in console input (reproduced minimal on
-/// .NET 10 / Win11), and a subscribed handler suppresses the default termination - a dead
-/// process. Instead TreatControlCAsInput turns Ctrl+C into a plain input char that the
-/// editor loop reads deterministically; CancelKeyPress stays subscribed only as a
-/// Ctrl+Break fallback. The exit path never calls Environment.Exit (also deadlock-prone
-/// here): threads only signal `done`, the main thread wakes and returns normally.</summary>
+/// Ctrl+C handling (monitor): Console.CancelKeyPress is NOT the exit path. Dispatch of that
+/// event was observed to never run while a thread is blocked in console input (reproduced
+/// minimal on .NET 10 / Win11), and a subscribed handler suppresses the default termination -
+/// a dead process. Instead TreatControlCAsInput turns Ctrl+C into a plain input char that the
+/// editor loop reads deterministically; CancelKeyPress stays subscribed only as a Ctrl+Break
+/// fallback. The exit path never calls Environment.Exit (also deadlock-prone here): threads
+/// only signal `done`, the main thread wakes and returns normally. Script mode has no
+/// console-input reader, so CancelKeyPress is its primary, reliable cancel path - see RunScript.</summary>
 internal static class Program
 {
     private static readonly object ConsoleLock = new();
@@ -45,6 +47,7 @@ internal static class Program
         ListDevicesCommand c => ListDevices(c),
         MonitorCommand c => Monitor(c.Options),
         SendCommand c => Send(c),
+        ScriptCommand c => RunScript(c),
         _ => UsageError("internal: unhandled command"),
     };
 
@@ -217,6 +220,80 @@ internal static class Program
         return exitCode.Value;
     }
 
+    // ---- script: Lua automation -------------------------------------------------------
+
+    /// <summary>Runs a Lua script against a live RTT link. The script thread owns the Lua state;
+    /// transport events reach it only through ScriptRuntime (which subscribed itself). Double
+    /// Ctrl+C: the first press asks the script to stop at the next rtt.* boundary, the second is
+    /// left to default termination (a script stuck in pure Lua cannot be interrupted safely).</summary>
+    private static int RunScript(ScriptCommand command)
+    {
+        CommandLineOptions options = command.Options;
+        if (!File.Exists(command.ScriptPath))
+            throw new UsageException($"script: file not found: {command.ScriptPath}");
+        if (options.ScriptTimeoutMs is < 0)
+            throw new UsageException("script: --script-timeout must be >= 0 ms (0 = off)");
+
+        RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
+        Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
+        byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
+
+        using var transport = new JLinkRttTransport();
+        var runtime = new ScriptRuntime(transport, encoding, eol, WriteDiag, options.ScriptTimeoutMs ?? 0);
+
+        try
+        {
+            transport.Open(config);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        {
+            Console.Error.WriteLine($"rtt-cli: {ex.Message}");
+            return 1;
+        }
+
+        bool cancelRequested = false;
+        Console.CancelKeyPress += (_, e) =>
+        {
+            if (cancelRequested) return;   // second press: e.Cancel stays false, default kills us
+            cancelRequested = true;
+            e.Cancel = true;
+            runtime.RequestCancel();
+        };
+
+        var exitCode = new StrongBox<int>(1);
+        using var done = new ManualResetEventSlim(false);
+        var scriptThread = new Thread(() =>
+        {
+            try
+            {
+                var host = new LuaScriptHost(runtime, command.ScriptPath);
+                exitCode.Value = host.Run();
+            }
+            catch (ScriptError ex)
+            {
+                WriteDiag($"rtt-cli: {ex.Message}");
+                exitCode.Value = 1;
+            }
+            catch (Exception ex)
+            {
+                // binding-internal or unexpected failure must not crash the process uncleanly
+                WriteDiag($"rtt-cli: script crashed: {ex.Message}");
+                exitCode.Value = 1;
+            }
+            finally
+            {
+                done.Set();
+            }
+        })
+        { IsBackground = true, Name = "rtt-script" };
+        scriptThread.Start();
+
+        done.Wait();
+        transport.Close();   // joins the poll thread before we report
+        scriptThread.Join();
+        return exitCode.Value;
+    }
+
     /// <summary>Shared wiring for both streaming commands: data into the renderer, DLL chatter
     /// into the log region (or stderr in plain mode) when verbose, and every failure path
     /// converging on `done` (never Environment.Exit - see the class doc). Ctrl+Break also lands
@@ -365,6 +442,8 @@ internal static class Program
               rtt-cli list-devices [--filter <text>]    list the J-Link DLL device database
               rtt-cli send <text> [--hex] [options]     send once, optionally wait for a reply
                                         (text: \n \r \t \\ escapes are interpreted)
+              rtt-cli script <file.lua> [options]
+                                        run a Lua automation script (rtt.* API)
 
             Connection options:
               --chip <name>       target device, e.g. STM32H743XI (required for monitor/send)
@@ -387,6 +466,13 @@ internal static class Program
               --log <file>          also append raw received bytes to a file
               -tui, --tui           (monitor only) chat-style layout: log on top, "> " input
                                     pinned to the bottom (off by default; needs a VT terminal)
+
+            Script options:
+              --script-timeout <ms>  hard limit for the whole script (0/absent = off; enforced
+                                  at rtt.* call boundaries). API: send/send_hex/log/wait/
+                                  wait_hex/expect/now/sleep/exit. Text APIs are ASCII-reliable;
+                                  use wait_hex/send_hex for binary. First Ctrl+C asks the
+                                  script to stop, second Ctrl+C hard-exits.
 
             Other:
               --wait <ms>         (send / redirected monitor) print received bytes for this

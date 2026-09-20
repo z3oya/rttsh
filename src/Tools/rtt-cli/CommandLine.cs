@@ -29,6 +29,9 @@ internal sealed class CommandLineOptions
     public bool Verbose { get; set; }
     public string? LogFile { get; set; }
     public int? WaitMs { get; set; }
+    /// <summary>script only: hard limit for the whole script in ms; 0/absent = no limit.
+    /// Enforced at rtt.* call boundaries.</summary>
+    public int? ScriptTimeoutMs { get; set; }
     /// <summary>Substring filter, list-devices only.</summary>
     public string? DeviceFilter { get; set; }
 
@@ -60,6 +63,7 @@ internal abstract record RttCommand;
 internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
+internal sealed record ScriptCommand(string ScriptPath, CommandLineOptions Options) : RttCommand;
 internal sealed record HelpCommand : RttCommand;
 internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
@@ -89,6 +93,10 @@ internal static class CommandLine
                 if (args.Length < 2 || args[1].StartsWith("--"))
                     return new UsageErrorCommand("send: missing <text> payload");
                 return new SendCommand(args[1], ParseOptions(args, 2));
+            case "script":
+                if (args.Length < 2 || args[1].StartsWith("--"))
+                    return new UsageErrorCommand("script: missing <file.lua> path");
+                return new ScriptCommand(args[1], ParseOptions(args, 2));
             default:
                 if (!args[0].StartsWith("--"))
                     return new UsageErrorCommand($"unknown command '{args[0]}'");
@@ -133,6 +141,7 @@ internal static class CommandLine
                 case "--log": options.LogFile = Next("log file"); break;
                 case "--filter": options.DeviceFilter = Next("substring"); break;
                 case "--wait": options.WaitMs = ParseInt(Next("milliseconds"), arg); break;
+                case "--script-timeout": options.ScriptTimeoutMs = ParseInt(Next("milliseconds"), arg); break;
                 default:
                     throw new UsageException($"unknown option '{arg}'");
             }
