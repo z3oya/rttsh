@@ -2,22 +2,38 @@ using System.Text;
 
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>Minimal line editor over Console.ReadKey(intercept), used while
-/// Console.TreatControlCAsInput is on: printable chars append, Backspace deletes, Enter commits,
-/// Ctrl+C returns false. Ctrl+C therefore arrives as an ordinary input character - independent
-/// of Console.CancelKeyPress dispatch, which never fires while a thread sits blocked in console
-/// input (see Program's class doc). With a TerminalUi the echo lands on the pinned bottom input
-/// row; without one, chars echo inline. Arrow keys and other control keys are ignored: sent
+/// <summary>The line editor's view of the terminal. TerminalUi implements it in TUI mode;
+/// tests substitute a recorder - the real console cannot be driven from unit tests.</summary>
+internal interface IInputSurface
+{
+    void WriteLog(string text);
+    bool TryAppendInputChar(char c);
+    void RedrawInput(string buffer);
+    void CommitInput(string line);
+}
+
+/// <summary>Minimal line editor, used while Console.TreatControlCAsInput is on: printable chars
+/// append, Backspace deletes, Enter commits, Ctrl+C returns false. Ctrl+C therefore arrives as
+/// an ordinary input character - independent of Console.CancelKeyPress dispatch, which never
+/// fires while a thread sits blocked in console input (see Program's class doc). With an
+/// IInputSurface (TUI mode) the echo lands on the pinned bottom input row; without one, chars
+/// echo inline. Up/Down recall the session history into the box (TUI mode only: the plain
+/// inline echo cannot cleanly erase a wrapped line). All other control keys are ignored: sent
 /// lines are typed or pasted, and paste delivers its chars one by one.</summary>
 internal static class ConsoleInput
 {
-    /// <summary>Reads one line; false when Ctrl+C was pressed.</summary>
-    public static bool TryReadLine(TerminalUi? ui, out string line)
+    /// <summary>Reads one line from the real console; false when Ctrl+C was pressed.</summary>
+    public static bool TryReadLine(IInputSurface? ui, InputHistory history, out string line) =>
+        TryReadLine(ui, history, static () => Console.ReadKey(intercept: true), out line);
+
+    /// <summary>Reads one line from <paramref name="readKey"/> (a seam for tests); false when
+    /// Ctrl+C was pressed.</summary>
+    public static bool TryReadLine(IInputSurface? ui, InputHistory history, Func<ConsoleKeyInfo> readKey, out string line)
     {
         var buffer = new StringBuilder();
         while (true)
         {
-            ConsoleKeyInfo key = Console.ReadKey(intercept: true);
+            ConsoleKeyInfo key = readKey();
 
             if (key.Key == ConsoleKey.C && (key.Modifiers & ConsoleModifiers.Control) != 0)
             {
@@ -44,8 +60,23 @@ internal static class ConsoleInput
                         else ui.RedrawInput(buffer.ToString());   // the tail window may shift: full redraw
                     }
                     break;
+                case ConsoleKey.UpArrow when ui is not null:
+                    if (history.TryOlder(buffer.ToString(), out string older))
+                    {
+                        buffer.Clear().Append(older);
+                        ui.RedrawInput(older);
+                    }
+                    break;
+                case ConsoleKey.DownArrow when ui is not null:
+                    if (history.TryNewer(out string newer))
+                    {
+                        buffer.Clear().Append(newer);
+                        ui.RedrawInput(newer);
+                    }
+                    break;
                 default:
-                    // >= ' ' skips control chars; DEL (0x7f) also ignored.
+                    // >= ' ' skips control chars; DEL (0x7f) also ignored. Arrows land here too
+                    // when ui is null (plain mode ignores them).
                     if (key.KeyChar is >= ' ' and not '\u007f')
                     {
                         buffer.Append(key.KeyChar);

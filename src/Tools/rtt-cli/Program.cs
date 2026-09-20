@@ -125,6 +125,7 @@ internal static class Program
 
             // Line input runs on a background thread so the main thread stays wakeable.
             if (interactive) Console.TreatControlCAsInput = true;
+            var history = new InputHistory();   // session-only; owned by the input thread
             var inputThread = new Thread(() =>
             {
                 try
@@ -136,8 +137,11 @@ internal static class Program
                     }
                     else
                     {
-                        while (ReadLine(interactive, ui) is { } line)
+                        while (ReadLine(interactive, ui, history) is { } line)
+                        {
+                            history.Record(line);
                             SendInputLine(line);
+                        }
                     }
 
                     // A piped script reaches EOF as soon as PowerShell writes it. Give the
@@ -177,8 +181,8 @@ internal static class Program
     }
 
     /// <summary>One input line. Returns null on Ctrl+C (interactive) or EOF (redirected).</summary>
-    private static string? ReadLine(bool interactive, TerminalUi? ui) =>
-        interactive ? (ConsoleInput.TryReadLine(ui, out string? line) ? line : null)
+    private static string? ReadLine(bool interactive, TerminalUi? ui, InputHistory history) =>
+        interactive ? (ConsoleInput.TryReadLine(ui, history, out string? line) ? line : null)
                     : Console.ReadLine();
 
     // ---- send: one-shot payload ------------------------------------------------------
@@ -465,7 +469,8 @@ internal static class Program
               --hex                 show payload as a 16-byte-per-line hex dump (send: parse payload as hex)
               --log <file>          also append raw received bytes to a file
               -tui, --tui           (monitor only) chat-style layout: log on top, "> " input
-                                    pinned to the bottom (off by default; needs a VT terminal)
+                                    pinned to the bottom (off by default; needs a VT terminal);
+                                    Up/Down recall previously sent lines
 
             Script options:
               --script-timeout <ms>  hard limit for the whole script (0/absent = off; enforced

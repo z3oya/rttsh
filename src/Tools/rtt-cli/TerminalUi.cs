@@ -16,7 +16,7 @@ namespace Toolbox.Tools.RttCli;
 /// (which holds nothing) serializes against them. Windows needs
 /// ENABLE_VIRTUAL_TERMINAL_PROCESSING; if that fails (or stdout is redirected) TryCreate
 /// returns null and Program keeps the plain inline mode.</summary>
-internal sealed class TerminalUi : IDisposable
+internal sealed class TerminalUi : IDisposable, IInputSurface
 {
     private const string Esc = "\x1b";
     private const string HideCursor = "\x1b[?25l";
