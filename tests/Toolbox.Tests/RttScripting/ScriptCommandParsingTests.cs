@@ -57,4 +57,16 @@ public class ScriptCommandParsingTests
     {
         Assert.Throws<UsageException>(() => CommandLine.Parse(["script", "--eval", "x", "a.lua"]));
     }
+
+    [Fact]
+    public void Script_manual_is_a_reference_command()
+    {
+        Assert.IsType<ManualCommand>(CommandLine.Parse(["script", "--manual"]));
+    }
+
+    [Fact]
+    public void Script_manual_is_forgiving_about_position()
+    {
+        Assert.IsType<ManualCommand>(CommandLine.Parse(["script", "a.lua", "--manual"]));
+    }
 }

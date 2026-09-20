@@ -64,6 +64,8 @@ internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
+
+internal sealed record ManualCommand : RttCommand;
 internal sealed record HelpCommand : RttCommand;
 internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
@@ -94,6 +96,8 @@ internal static class CommandLine
                     return new UsageErrorCommand("send: missing <text> payload");
                 return new SendCommand(args[1], ParseOptions(args, 2));
             case "script":
+                if (Array.IndexOf(args, "--manual") >= 0)
+                    return new ManualCommand();
                 if (args.Length >= 2 && args[1] == "--eval")
                 {
                     if (args.Length < 3)

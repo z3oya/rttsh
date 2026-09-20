@@ -42,6 +42,7 @@ internal static class Program
     private static int Run(RttCommand command) => command switch
     {
         HelpCommand => PrintHelp(),
+        ManualCommand => PrintManual(),
         VersionCommand => PrintVersion(),
         UsageErrorCommand c => UsageError(c.Message),
         ListDevicesCommand c => ListDevices(c),
@@ -50,6 +51,12 @@ internal static class Program
         ScriptCommand c => RunScript(c),
         _ => UsageError("internal: unhandled command"),
     };
+
+    private static int PrintManual()
+    {
+        Console.WriteLine(LuaManual.Text);
+        return 0;
+    }
 
     // ---- monitor: interactive terminal ---------------------------------------------
 
@@ -450,6 +457,7 @@ internal static class Program
                                         (text: \n \r \t \\ escapes are interpreted)
               rtt-cli script <file.lua> [options]
               rtt-cli script --eval '<lua code>' [options]
+              rtt-cli script --manual             print the rtt.* Lua API reference
                                         run a Lua automation script (rtt.* API)
 
             Connection options:
