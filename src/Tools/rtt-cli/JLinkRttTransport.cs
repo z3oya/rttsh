@@ -17,6 +17,7 @@ internal sealed class JLinkRttTransport : IRttTransport
     private const int PollIdleMs = 2;
     /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
     private const int IdlePollsPerHaltCheck = 1000;
+    /// <summary>Zero-progress budget for Write: any partial write restarts it.</summary>
     private const int WriteRetryDeadlineMs = 1500;
     private const int WriteRetryDelayMs = 25;
 
@@ -199,11 +200,12 @@ internal sealed class JLinkRttTransport : IRttTransport
         Error?.Invoke(new IOException(message));
     }
 
-    /// <summary>Writes to the down channel, retrying briefly when the DLL reports a full
-    /// buffer: right after RTT START its buffer view has not settled yet (an immediate write
-    /// reports 0 written), and a paused target stops draining the down channel. One attempt
-    /// per delay under the native lock, until the deadline; then the payload is dropped with
-    /// a clear error rather than silently.</summary>
+    /// <summary>Writes to the down channel, retrying while the DLL reports a full buffer: right
+    /// after RTT START its buffer view has not settled yet (an immediate write reports 0
+    /// written), and a stalled target drains the ring slowly. The deadline is per progress: any
+    /// partial write resets it, so large payloads take as long as the target needs to drain,
+    /// while a target that reads nothing fails after WriteRetryDeadlineMs of zero progress with
+    /// a message that names the actual fault.</summary>
     public void Write(ReadOnlySpan<byte> data)
     {
         if (data.Length == 0) return;
@@ -222,8 +224,9 @@ internal sealed class JLinkRttTransport : IRttTransport
                 written += n;
                 if (written >= buffer.Length) return;
                 if (!_open) throw new IOException("The RTT link is not open.");
+                if (n > 0) deadline = Environment.TickCount64 + WriteRetryDeadlineMs;   // progress buys a fresh budget
                 if (Environment.TickCount64 >= deadline)
-                    throw new IOException($"RTT down-buffer stays full (wrote {written}/{buffer.Length} bytes) - is the target reading the down channel?");
+                    throw new IOException($"RTT down-buffer made no progress for {WriteRetryDeadlineMs} ms (wrote {written}/{buffer.Length} bytes) - is the target reading the down channel?");
                 Thread.Sleep(WriteRetryDelayMs);
             }
         }
