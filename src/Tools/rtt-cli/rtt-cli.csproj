@@ -14,4 +14,8 @@
     <ProjectReference Include="..\..\Toolbox.Core\Toolbox.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Toolbox.Tests" />
+  </ItemGroup>
+
 </Project>
