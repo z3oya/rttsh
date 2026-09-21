@@ -3,7 +3,8 @@ using Toolbox.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>IRttTransport over the SEGGER J-Link DLL, RTT channel 0 (mirrors the reference rtt-t2 tool).
+/// <summary>IRttTransport over the SEGGER J-Link DLL (mirrors the reference rtt-t2 tool), reading
+/// and writing the up/down channel pair selected by RttConnectionConfig.Channel (default 0).
 ///
 /// Threading: the DLL is NOT thread-safe; the reference tool gets serialization for free from Qt's single
 /// UI thread. Here every native call runs under _nativeLock. The poll thread owns the failure path: on a
@@ -12,9 +13,8 @@ namespace Toolbox.Tools.RttCli;
 /// it OUTSIDE the lock (it may be inside a read), then tears down.</summary>
 internal sealed class JLinkRttTransport : IRttTransport
 {
-    /// <summary>The RTT channel pair this tool serves today. The per-target instance lock keys
-    /// off this same constant; a future --channel turns it into a field set from the config.</summary>
-    public const int Channel = 0;
+    /// <summary>RTT up/down channel pair served by this transport; set from the config in Open().</summary>
+    public int Channel { get; private set; }
     private const int PollBytes = 8192;
     private const int PollIdleMs = 2;
     /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
@@ -51,6 +51,8 @@ internal sealed class JLinkRttTransport : IRttTransport
         lock (_nativeLock)
         {
             if (_open) throw new IOException("The RTT link is already open.");
+
+            Channel = config.Channel;
 
             if (!_lib.Load(config.DllPath, out string loadError))
                 throw new IOException(loadError);
@@ -145,7 +147,7 @@ internal sealed class JLinkRttTransport : IRttTransport
         return index < 0 ? 0 : start + (uint)index;
     }
 
-    /// <summary>Polls channel 0 at a fixed ~2ms cadence (matching the reference tool). A negative
+    /// <summary>Polls the configured up-channel at a fixed ~2ms cadence (matching the reference tool). A negative
     /// read fails the link; a stretch of empty reads with a halted core does too - a silent stall
     /// would otherwise look exactly like a quiet target.</summary>
     private void PollLoop()

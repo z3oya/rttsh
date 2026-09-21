@@ -63,7 +63,7 @@ internal static class Program
     private static int Monitor(CommandLineOptions options)
     {
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
-        using TargetLock? guard = TargetLock.TryAcquire(config, JLinkRttTransport.Channel, Console.Error);
+        using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
         using var transport = new JLinkRttTransport();
         using var done = new ManualResetEventSlim(false);
@@ -107,7 +107,7 @@ internal static class Program
                 return 1;
             }
 
-            string banner = $"RTT terminal on {config.Chip} (channel {JLinkRttTransport.Channel}). Type a line + Enter to send; Ctrl+C to exit.";
+            string banner = $"RTT terminal on {config.Chip} (channel {config.Channel}). Type a line + Enter to send; Ctrl+C to exit.";
             if (!Console.IsOutputRedirected)   // TUI implies not redirected; this only trims the stderr branch
             {
                 WriteSessionLine(ui, banner);
@@ -200,7 +200,7 @@ internal static class Program
     {
         CommandLineOptions options = command.Options;
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
-        using TargetLock? guard = TargetLock.TryAcquire(config, JLinkRttTransport.Channel, Console.Error);
+        using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
         byte[] payload = EncodePayload(command.Payload, options);
         // Line targets need a terminator to execute; --hex sends raw bytes untouched.
@@ -250,7 +250,7 @@ internal static class Program
             throw new UsageException("script: --script-timeout must be >= 0 ms (0 = off)");
 
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
-        using TargetLock? guard = TargetLock.TryAcquire(config, JLinkRttTransport.Channel, Console.Error);
+        using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
         Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
         byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));

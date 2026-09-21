@@ -20,6 +20,7 @@ internal sealed class CommandLineOptions
     public uint? RttAddress { get; set; }
     public uint? RttRange { get; set; }
     public int? SerialNo { get; set; }
+    public int? Channel { get; set; }
     public string DllPath { get; set; } = "";
     public TextEncodingKind? Encoding { get; set; }
     public TextEol? Eol { get; set; }
@@ -46,6 +47,9 @@ internal sealed class CommandLineOptions
     {
         if (Chip.Length == 0)
             throw new UsageException("missing required option --chip <device> (see rtt-cli list-devices)");
+        int channel = Channel ?? 0;
+        if (channel is < 0 or > RttConnectionConfig.MaxChannel)
+            throw new UsageException($"--channel: expected 0-{RttConnectionConfig.MaxChannel}, got {Channel}");
         return new RttConnectionConfig
         {
             Chip = Chip,
@@ -56,6 +60,7 @@ internal sealed class CommandLineOptions
             RttAddress = RttAddress ?? 0,
             RttRange = RttRange ?? 0,
             SerialNo = SerialNo ?? 0,
+            Channel = channel,
         };
     }
 }
@@ -193,6 +198,7 @@ internal static class CommandLine
         RttAddress = p.GetValue(s.RttAddress),
         RttRange = p.GetValue(s.RttRange),
         SerialNo = p.GetValue(s.SerialNo),
+        Channel = p.GetValue(s.Channel),
         DllPath = p.GetValue(s.Dll) ?? "",
         Encoding = p.GetValue(s.Encoding),
         Eol = p.GetValue(s.Eol),

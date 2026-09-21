@@ -6,8 +6,7 @@ namespace Toolbox.Tools.RttCli;
 /// <summary>One rtt-cli instance per target+channel. The lock is an OS file handle, not the
 /// file's existence: the kernel closes the handle whatever way the process dies (crash,
 /// taskkill, power loss), so a leftover .lock file can never block the next instance - the
-/// file on disk is only the holder's PID note. Channel is a plain parameter so a future
-/// --channel just changes the call site.</summary>
+/// file on disk is only the holder's PID note.</summary>
 internal sealed class TargetLock : IDisposable
 {
     /// <summary>Locks live per user (LOCALAPPDATA), named after target+channel only.</summary>
@@ -24,10 +23,10 @@ internal sealed class TargetLock : IDisposable
     /// warning (with the holder's PID, best effort) to <paramref name="error"/> and returns
     /// null. Unrelated IO failures never claim the target is held. <paramref name="lockDirectory"/>
     /// overrides the default folder (tests).</summary>
-    public static TargetLock? TryAcquire(RttConnectionConfig config, int channel, TextWriter error, string? lockDirectory = null)
+    public static TargetLock? TryAcquire(RttConnectionConfig config, TextWriter error, string? lockDirectory = null)
     {
         string dir = lockDirectory ?? DefaultDirectory;
-        string path = Path.Combine(dir, LockName(config, channel));
+        string path = Path.Combine(dir, LockName(config));
         FileStream file;
         try
         {
@@ -39,7 +38,7 @@ internal sealed class TargetLock : IDisposable
         catch (IOException ex) when (ex.HResult == SharingViolation)
         {
             error.WriteLine(
-                $"rtt-cli: {config.Chip} channel {channel} ({Describe(config)}) is already held by another " +
+                $"rtt-cli: {config.Chip} channel {config.Channel} ({Describe(config)}) is already held by another " +
                 $"rtt-cli ({ReadHolderPid(path)}). Close that instance first, or pick a different probe (--sn).");
             return null;
         }
@@ -82,9 +81,9 @@ internal sealed class TargetLock : IDisposable
 
     /// <summary>chip@if#sn#chN, flattened into a file name: Windows forbids \ / : * ? " &lt; &gt; |
     /// and the chip name is the only free-form part.</summary>
-    private static string LockName(RttConnectionConfig config, int channel)
+    private static string LockName(RttConnectionConfig config)
     {
-        string key = $"{config.Chip}@{config.Interface.ToString().ToLowerInvariant()}#{config.SerialNo}#ch{channel}";
+        string key = $"{config.Chip}@{config.Interface.ToString().ToLowerInvariant()}#{config.SerialNo}#ch{config.Channel}";
         return new string(key.Select(c => char.IsAsciiLetterOrDigit(c) || "@#.-_".Contains(c) ? c : '_').ToArray()) + ".lock";
     }
 }

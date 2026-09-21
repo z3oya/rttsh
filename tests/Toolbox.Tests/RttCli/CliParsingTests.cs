@@ -228,4 +228,35 @@ public class CliParsingTests
         var command = Assert.IsType<ListDevicesCommand>(CommandLine.Parse(["list-devices", "--filter", "stm32"]));
         Assert.Equal("stm32", command.Filter);
     }
+
+    [Fact]
+    public void Channel_option_parses_into_config()
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse(["--chip", "X", "--channel", "3"]));
+        Assert.Equal(3, command.Options.ToConnectionConfig(resetDefault: false).Channel);
+    }
+
+    [Fact]
+    public void Channel_defaults_to_zero()
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse(["--chip", "X"]));
+        Assert.Equal(0, command.Options.ToConnectionConfig(resetDefault: false).Channel);
+    }
+
+    [Theory]
+    [InlineData("16")]
+    [InlineData("-1")]
+    public void Channel_out_of_range_is_a_usage_error(string channel)
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse(["--chip", "X", "--channel", channel]));
+        var ex = Assert.Throws<UsageException>(() => command.Options.ToConnectionConfig(resetDefault: false));
+        if (channel == "16")   // pin the wording once; -1 anchors the lower-bound branch
+            Assert.Contains("--channel: expected 0-15, got 16", ex.Message);
+    }
+
+    [Fact]
+    public void Channel_without_value_is_a_usage_error()
+    {
+        Assert.Throws<UsageException>(() => CommandLine.Parse(["--chip", "X", "--channel"]));
+    }
 }

@@ -30,6 +30,7 @@ internal sealed class Spec
     public required Option<uint?> RttAddress { get; init; }
     public required Option<uint?> RttRange { get; init; }
     public required Option<int?> SerialNo { get; init; }
+    public required Option<int?> Channel { get; init; }
     public required Option<string?> Dll { get; init; }
     public required Option<TextEncodingKind?> Encoding { get; init; }
     public required Option<TextEol?> Eol { get; init; }
@@ -67,6 +68,8 @@ internal static class CliSpec
             "byte range searched for the \"SEGGER RTT\" signature");
         Option<int?> serialNo = IntOption("--sn", "number", "serial number",
             "probe USB serial number (default: first probe)");
+        Option<int?> channel = IntOption("--channel", "0-15", "channel",
+            "RTT up/down channel pair (default 0; selects both the monitored up-channel and the input down-channel)");
         Option<string?> dll = TextOption("--dll", "path", "DLL path",
             "JLink DLL path (default: auto-detect, incl. SEGGER roots)");
         Option<TextEol?> eol = EnumOption("--eol", "lf|cr|crlf|none",
@@ -93,9 +96,9 @@ internal static class CliSpec
         Option<string?> filter = TextOption("--filter", "text", "substring",
             "substring filter, list-devices only");
 
-        var root = new RootCommand("rtt-cli - SEGGER J-Link RTT terminal (channel 0)");
+        var root = new RootCommand("rtt-cli - SEGGER J-Link RTT terminal");
         foreach (Option option in new Option[]
-                 { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, dll, eol,
+                 { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
                    encoding, hex, tui, verbose, log, wait, scriptTimeout, filter })
             root.Options.Add(option);
 
@@ -168,6 +171,7 @@ internal static class CliSpec
             RttAddress = rttAddress,
             RttRange = rttRange,
             SerialNo = serialNo,
+            Channel = channel,
             Dll = dll,
             Encoding = encoding,
             Eol = eol,
