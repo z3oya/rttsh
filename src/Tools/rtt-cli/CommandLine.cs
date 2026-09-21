@@ -1,4 +1,5 @@
-using System.Globalization;
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using Toolbox.Core.Rtt;
 using Toolbox.Core.SerialComm;
 
@@ -65,137 +66,142 @@ internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttC
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
 
+/// <summary>Library-rendered help text (CliSpec.HelpText), ready to print.</summary>
+internal sealed record HelpCommand(string Text) : RttCommand;
 internal sealed record ManualCommand : RttCommand;
-internal sealed record HelpCommand : RttCommand;
 internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
 
 internal sealed class UsageException(string message) : Exception(message);
 
-/// <summary>Hand-rolled argv parsing (the repo has no command-line library; three commands
-/// do not justify one). Pure function of string[] - trivially reviewable, no hidden state.</summary>
+/// <summary>System.CommandLine parses; Parse maps the ParseResult onto the RttCommand union.
+/// Pure function of string[] (the test seam). Only this file and CliSpec.cs know the library;
+/// the first-token pre-checks below keep the old usage messages and the old
+/// return-UsageErrorCommand-vs-throw-UsageException split that the tests pin down.</summary>
 internal static class CommandLine
 {
     public static RttCommand Parse(string[] args)
     {
-        if (args.Length == 0)
-            return new MonitorCommand(new CommandLineOptions());
-
-        int first = 0;
-        switch (args[0])
+        // legacy bare words, exactly at args[0] like the old switch did
+        if (args.Length > 0)
         {
-            case "--help" or "-h" or "help":
-                return new HelpCommand();
-            case "--version" or "-v" or "version":
-                return new VersionCommand();
-            case "list-devices":
-                first = 1;
-                break;
-            case "send":
-                if (args.Length < 2 || args[1].StartsWith("--"))
-                    return new UsageErrorCommand("send: missing <text> payload");
-                return new SendCommand(args[1], ParseOptions(args, 2));
-            case "script":
-                if (Array.IndexOf(args, "--manual") >= 0)
-                    return new ManualCommand();
-                if (args.Length >= 2 && args[1] == "--eval")
-                {
-                    if (args.Length < 3)
-                        return new UsageErrorCommand("script: --eval needs the lua source text");
-                    return new ScriptCommand(null, args[2], ParseOptions(args, 3));
-                }
-                if (args.Length < 2 || args[1].StartsWith("--"))
-                    return new UsageErrorCommand("script: missing <file.lua> path (or --eval <code>)");
-                return new ScriptCommand(args[1], null, ParseOptions(args, 2));
-            default:
-                if (!args[0].StartsWith("--"))
-                    return new UsageErrorCommand($"unknown command '{args[0]}'");
-                break;   // options only -> default command is monitor
-        }
-
-        var options = ParseOptions(args, first);
-        return first == 1
-            ? new ListDevicesCommand(options.DeviceFilter, options.DllPath)
-            : new MonitorCommand(options);
-    }
-
-    private static CommandLineOptions ParseOptions(string[] args, int start)
-    {
-        var options = new CommandLineOptions();
-        for (int i = start; i < args.Length; i++)
-        {
-            string arg = args[i];
-            string Next(string what)
+            switch (args[0])
             {
-                if (i + 1 >= args.Length)
-                    throw new UsageException($"{arg}: missing {what} value");
-                return args[++i];
-            }
-
-            switch (arg)
-            {
-                case "--chip": options.Chip = Next("device name"); break;
-                case "--speed": options.SpeedKhz = ParseInt(Next("speed"), arg); break;
-                case "--if": options.Interface = ParseInterface(Next("swd|jtag")); break;
-                case "--reset": options.ResetOnConnect = true; break;
-                case "--no-reset": options.ResetOnConnect = false; break;
-                case "--rtt-addr": options.RttAddress = ParseHex(Next("address"), arg); break;
-                case "--rtt-range": options.RttRange = ParseHex(Next("range"), arg); break;
-                case "--sn": options.SerialNo = ParseInt(Next("serial number"), arg); break;
-                case "--dll": options.DllPath = Next("DLL path"); break;
-                case "--eol": options.Eol = ParseEol(Next("lf|cr|crlf|none")); break;
-                case "--encoding": options.Encoding = ParseEncoding(Next("utf8|ascii|latin1")); break;
-                case "--hex": options.Hex = true; break;
-                case "-tui" or "--tui": options.Tui = true; break;
-                case "--verbose": options.Verbose = true; break;
-                case "--log": options.LogFile = Next("log file"); break;
-                case "--filter": options.DeviceFilter = Next("substring"); break;
-                case "--wait": options.WaitMs = ParseInt(Next("milliseconds"), arg); break;
-                case "--script-timeout": options.ScriptTimeoutMs = ParseInt(Next("milliseconds"), arg); break;
-                default:
-                    throw new UsageException($"unknown option '{arg}'");
+                case "help": return new HelpCommand(CliSpec.HelpText(["--help"]));
+                case "version": return new VersionCommand();
             }
         }
-        return options;
+
+        // legacy first-token pre-checks, message for message; they claim only "--" tokens
+        // (payloads/paths may start with a single dash), and help spellings pass through so
+        // "send --help" renders the subcommand help instead of the old usage error
+        if (args.Length > 0 && args[0] == "send"
+            && (args.Length < 2 || IsNonHelpOption(args[1])))
+            return new UsageErrorCommand("send: missing <text> payload");
+        if (args.Length > 0 && args[0] == "script")
+        {
+            if (Array.IndexOf(args, "--manual") >= 0)   // position-independent, as before
+                return new ManualCommand();
+            if (args.Length >= 2 && args[1] == "--eval")
+            {
+                if (args.Length < 3)
+                    return new UsageErrorCommand("script: --eval needs the lua source text");
+                // else: fall through - the parser validates the remaining tokens
+            }
+            else if (args.Length < 2 || IsNonHelpOption(args[1]))
+            {
+                return new UsageErrorCommand("script: missing <file.lua> path (or --eval <code>)");
+            }
+        }
+
+        // parse-only: the library reports problems via ParseResult.Errors and prints nothing
+        Spec spec = CliSpec.Build();
+        ParseResult parsed = spec.Root.Parse(args);
+
+        // help/version beat parse errors. Wider than the old switch, which only honored
+        // them at args[0]: help anywhere on the line now wins, even alongside bad tokens.
+        // Help re-renders from a clean parse so a stray bad token never leaks into the text.
+        if (parsed.GetResult(spec.Help) is not null)
+            return new HelpCommand(CliSpec.HelpText(HelpArgs(parsed.CommandResult.Command, spec)));
+        if (parsed.GetResult(spec.Version) is not null)
+            return new VersionCommand();
+
+        // every remaining parse problem -> UsageException; Program.Main prints the
+        // "rtt-cli: " prefix + hint and exits 2, unchanged
+        if (parsed.Errors.Count > 0)
+            throw new UsageException(Describe(parsed, args));
+
+        // map onto the command union; every command accepts every option (recursive shared
+        // pool), each command consumes only what it knows - loose old behavior kept
+        CommandLineOptions options = BuildOptions(parsed, spec);
+        Command command = parsed.CommandResult.Command;
+        if (command == spec.Send)
+            return new SendCommand(parsed.GetValue(spec.Payload)!, options);
+        if (command == spec.Script)
+        {
+            if (parsed.GetValue(spec.Manual))
+                return new ManualCommand();   // "rtt-cli --chip X script --manual" (script not at args[0])
+            string? path = parsed.GetValue(spec.ScriptFile);
+            string? eval = parsed.GetValue(spec.Eval);
+            if (eval is not null && path is not null)
+                throw new UsageException($"script: --eval cannot be combined with a script file ('{path}')");
+            return new ScriptCommand(path, eval, options);
+        }
+        if (command == spec.ListDevices)
+            return new ListDevicesCommand(options.DeviceFilter, options.DllPath);
+        return new MonitorCommand(options);   // no subcommand = default monitor
     }
 
-    private static int ParseInt(string text, string option)
+    /// <summary>An option-looking token the pre-checks must not claim: anything starting
+    /// with "--" except the help spellings (they fall through to the parser) and the bare
+    /// "--" end-of-options separator (the library consumes it, so "send -- -5" sends "-5").
+    /// Single-dash tokens stay payload/path material, as in the old parser ("send -5",
+    /// "script -x.lua"); "-h" after send/script renders that subcommand's help.</summary>
+    private static bool IsNonHelpOption(string arg) =>
+        arg.StartsWith("--") && arg is not ("--help" or "--");
+
+    /// <summary>Parse args for re-rendering help of the matched command (one level deep).</summary>
+    private static string[] HelpArgs(Command matched, Spec spec)
     {
-        if (!int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
-            throw new UsageException($"{option}: '{text}' is not a number");
-        return value;
+        if (matched == spec.Send) return ["send", "--help"];
+        if (matched == spec.Script) return ["script", "--help"];
+        if (matched == spec.ListDevices) return ["list-devices", "--help"];
+        return ["--help"];
     }
 
-    private static uint ParseHex(string text, string option)
+    /// <summary>Old wording for the two most common failures; anything else keeps the
+    /// library message (exit code 2 + "rtt-cli: " prefix hold regardless).</summary>
+    private static string Describe(ParseResult parsed, string[] args)
     {
-        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
-            text = text[2..];
-        if (!uint.TryParse(text, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out uint value))
-            throw new UsageException($"{option}: '{text}' is not a hex address");
-        return value;
+        if (parsed.UnmatchedTokens.Count > 0)
+        {
+            string token = parsed.UnmatchedTokens[0];
+            if (token.StartsWith('-')) return $"unknown option '{token}'";
+            if (token == args[0]) return $"unknown command '{token}'";
+        }
+        return parsed.Errors[0].Message;
     }
 
-    private static RttInterface ParseInterface(string text) => text.ToLowerInvariant() switch
+    private static CommandLineOptions BuildOptions(ParseResult p, Spec s) => new()
     {
-        "swd" => RttInterface.Swd,
-        "jtag" => RttInterface.Jtag,
-        _ => throw new UsageException($"--if: expected swd or jtag, got '{text}'"),
-    };
-
-    private static TextEol ParseEol(string text) => text.ToLowerInvariant() switch
-    {
-        "lf" => TextEol.Lf,
-        "cr" => TextEol.Cr,
-        "crlf" => TextEol.CrLf,
-        "none" => TextEol.None,
-        _ => throw new UsageException($"--eol: expected lf, cr, crlf or none, got '{text}'"),
-    };
-
-    private static TextEncodingKind ParseEncoding(string text) => text.ToLowerInvariant() switch
-    {
-        "utf8" => TextEncodingKind.Utf8,
-        "ascii" => TextEncodingKind.Ascii,
-        "latin1" => TextEncodingKind.Latin1,
-        _ => throw new UsageException($"--encoding: expected utf8, ascii or latin1, got '{text}'"),
+        Chip = p.GetValue(s.Chip) ?? "",
+        SpeedKhz = p.GetValue(s.Speed),
+        Interface = p.GetValue(s.If),
+        // both flags given is pathological; the old parser was last-wins (position
+        // dependent), we pick a fixed precedence instead
+        ResetOnConnect = p.GetValue(s.NoReset) ? false : p.GetValue(s.Reset) ? true : null,
+        RttAddress = p.GetValue(s.RttAddress),
+        RttRange = p.GetValue(s.RttRange),
+        SerialNo = p.GetValue(s.SerialNo),
+        DllPath = p.GetValue(s.Dll) ?? "",
+        Encoding = p.GetValue(s.Encoding),
+        Eol = p.GetValue(s.Eol),
+        Hex = p.GetValue(s.Hex),
+        Tui = p.GetValue(s.Tui),
+        Verbose = p.GetValue(s.Verbose),
+        LogFile = p.GetValue(s.Log),
+        WaitMs = p.GetValue(s.Wait),
+        ScriptTimeoutMs = p.GetValue(s.ScriptTimeout),
+        DeviceFilter = p.GetValue(s.Filter),
     };
 }

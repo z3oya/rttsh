@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <PackageReference Include="NLua" Version="1.7.9" />
+    <PackageReference Include="System.CommandLine" Version="2.0.12" />
   </ItemGroup>
 
 </Project>

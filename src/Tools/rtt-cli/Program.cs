@@ -41,7 +41,7 @@ internal static class Program
 
     private static int Run(RttCommand command) => command switch
     {
-        HelpCommand => PrintHelp(),
+        HelpCommand c => PrintHelp(c),
         ManualCommand => PrintManual(),
         VersionCommand => PrintVersion(),
         UsageErrorCommand c => UsageError(c.Message),
@@ -445,61 +445,11 @@ internal static class Program
         return 0;
     }
 
-    private static int PrintHelp()
+    /// <summary>Help text is rendered by the parser from the CliSpec declarations
+    /// (library-generated; the exit-codes footer is part of it).</summary>
+    private static int PrintHelp(HelpCommand command)
     {
-        Console.WriteLine("""
-            rtt-cli - SEGGER J-Link RTT terminal (channel 0)
-
-            Usage:
-              rtt-cli [options]                         interactive terminal (default command)
-              rtt-cli list-devices [--filter <text>]    list the J-Link DLL device database
-              rtt-cli send <text> [--hex] [options]     send once, optionally wait for a reply
-                                        (text: \n \r \t \\ escapes are interpreted)
-              rtt-cli script <file.lua> [options]
-              rtt-cli script --eval '<lua code>' [options]
-              rtt-cli script --manual             print the rtt.* Lua API reference
-                                        run a Lua automation script (rtt.* API)
-
-            Connection options:
-              --chip <name>       target device, e.g. STM32H743XI (required for monitor/send)
-              --speed <kHz>       interface speed, default 4000
-              --if swd|jtag       target interface, default swd
-              --reset             reset the target on connect (off by default: J-Link reset
-                                  halts the core briefly; it is resumed automatically)
-              --no-reset          connect without resetting (default for every command)
-              --rtt-addr <hex>    known control-block address (default: SDK auto-scan)
-              --rtt-range <hex>   byte range searched for the "SEGGER RTT" signature
-              --sn <number>       probe USB serial number (default: first probe)
-              --dll <path>        JLink DLL path (default: auto-detect, incl. SEGGER roots)
-
-            Display options (monitor/send):
-              --eol lf|cr|crlf|none   line ending appended to text sent by monitor input and
-                                    send (default lf; --hex send payloads are raw)
-              --encoding utf8|ascii|latin1
-                                     decode received bytes (default utf8)
-              --hex                 show payload as a 16-byte-per-line hex dump (send: parse payload as hex)
-              --log <file>          also append raw received bytes to a file
-              -tui, --tui           (monitor only) chat-style layout: log on top, "> " input
-                                    pinned to the bottom (off by default; needs a VT terminal);
-                                    Up/Down recall previously sent lines
-
-            Script options:
-              --script-timeout <ms>  hard limit for the whole script (0/absent = off; enforced
-                                  at rtt.* call boundaries). API: send/send_hex/log/wait/
-                                  wait_hex/expect/now/sleep/exit. Text APIs are ASCII-reliable;
-                                  use wait_hex/send_hex for binary. First Ctrl+C asks the
-                                  script to stop, second Ctrl+C hard-exits.
-
-            Other:
-              --wait <ms>         (send / redirected monitor) print received bytes for this
-                                  long before exiting; redirected monitor defaults to 500 ms
-              --verbose           show J-Link connection progress logs (default: quiet;
-                                  runtime errors are always shown)
-              --version, -v       show rtt-cli's own version
-              --help              this help
-
-            Exit codes: 0 ok, 1 runtime failure, 2 usage error.
-            """);
+        Console.Write(command.Text);
         return 0;
     }
 
