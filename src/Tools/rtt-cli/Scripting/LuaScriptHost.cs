@@ -66,6 +66,25 @@ internal sealed class LuaScriptHost
         lua["HOST_exit"] = new Action<int>(_runtime.Exit);
         lua["HOST_describe"] = new Func<object?, string>(Describe);
 
+        // expect() gets Lua's own pattern engine: string.find lives in this state, and expect
+        // runs on this same thread, so the injected matcher is safe to call. string.find's
+        // 1-based inclusive end == the number of chars the runtime must consume. Malformed
+        // patterns raise inside find.Call - rewrap so the Lua message reaches the script.
+        LuaFunction find = lua.GetFunction("string.find");
+        _runtime.PatternMatcher = (region, pattern) =>
+        {
+            object?[] res;
+            try
+            {
+                res = find.Call(region, pattern, 1, false);
+            }
+            catch (LuaException ex)
+            {
+                throw new ScriptError($"expect: {ex.Message}");
+            }
+            return res.Length > 1 && res[1] is not null ? Convert.ToInt32(res[1]) : null;
+        };
+
         try
         {
             lua.DoString(_source, _chunkName);

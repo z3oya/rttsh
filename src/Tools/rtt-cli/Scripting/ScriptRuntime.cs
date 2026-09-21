@@ -105,17 +105,17 @@ internal sealed class ScriptRuntime
         ThrowLinkError();
         CheckWatchdog();
         if (pattern.Length == 0) throw new ScriptError("expect: empty pattern");
-        PumpUntil(() => Region().IndexOf(pattern, StringComparison.Ordinal) >= 0, timeoutMs);
+        PumpUntil(() => MatchEnd(Region(), pattern) is not null, timeoutMs);
         string region = Region();
-        int idx = region.IndexOf(pattern, StringComparison.Ordinal);
-        if (idx < 0)
+        int? end = MatchEnd(region, pattern);
+        if (end is null)
         {
             if (_linkError is not null) throw new ScriptError($"link failed: {_linkError.Message}");
             if (_cancelRequested) throw new ScriptError($"expect: cancelled before '{pattern}' arrived");
             throw new ScriptError($"expect: '{pattern}' not found within {timeoutMs} ms");
         }
-        string result = region[..(idx + pattern.Length)];
-        _scanPos += idx + pattern.Length;
+        string result = region[..end.Value];
+        _scanPos += end.Value;
         if (_scanPos >= 8192)
         {
             _pending.Remove(0, _scanPos);   // compact consumed history
@@ -155,6 +155,23 @@ internal sealed class ScriptRuntime
     }
 
     private string Region() => _pending.ToString(_scanPos, _pending.Length - _scanPos);
+
+    /// <summary>Locates <paramref name="pattern"/> in the scan region. null = the default
+    /// (engine-free) literal ordinal search; LuaScriptHost installs Lua's own matcher here so
+    /// expect() honors full Lua pattern syntax. Only touched from the script thread - same
+    /// thread that owns the Lua state (see LuaScriptHost).</summary>
+    public Func<string, string, int?>? PatternMatcher { get; set; }
+
+    /// <summary>The 0-based end of the match (== chars to consume), or null when absent.</summary>
+    private int? MatchEnd(string region, string pattern)
+    {
+        if (PatternMatcher is null)
+        {
+            int idx = region.IndexOf(pattern, StringComparison.Ordinal);
+            return idx < 0 ? null : idx + pattern.Length;
+        }
+        return PatternMatcher(region, pattern);
+    }
 
     /// <summary>Pumps events until the predicate holds, the timeout elapses, the link fails or
     /// cancellation is requested. Wakes on data or cancel signals.</summary>

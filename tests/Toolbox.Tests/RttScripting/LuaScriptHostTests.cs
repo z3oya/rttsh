@@ -67,6 +67,153 @@ public class LuaScriptHostTests
     }
 
     [Fact]
+    public void Expect_matches_lua_patterns()
+    {
+        // The manual promises Lua pattern syntax; %d+ must act as "one or more digits",
+        // not as the literal seven characters "tick=%d+".
+        using var h = Make("rtt.log(rtt.expect('tick=%d+', 500))");
+        h.Transport.Feed("tick=42 off\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["tick=42"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_pattern_consumes_through_the_match_end()
+    {
+        // o[f][f] is set syntax matching "off"; the following expect must only see
+        // what comes after the match, proving the scan position advanced past it.
+        using var h = Make("""
+            rtt.log(rtt.expect('o[f][f]', 500))
+            rtt.log(rtt.expect('end', 500))
+            """);
+        h.Transport.Feed("off end\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["off", " end"], h.Log);
+    }
+
+    [Fact]
+    public void Malformed_pattern_raises_a_script_error()
+    {
+        // Data is required: the matcher only reaches the broken construct while actually
+        // matching; against an empty region every pattern is a plain timeout.
+        using var h = Make("rtt.expect('[', 100)");
+        h.Transport.Feed("x"u8.ToArray());
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("malformed", ex.Message);
+    }
+
+    [Fact]
+    public void Expect_capture_class_matches_the_user_scenario()
+    {
+        using var h = Make("rtt.log(rtt.expect('(%a+)', 500))");
+        h.Transport.Feed("mode=idle\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["mode"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_optional_quantifier_matches_the_short_spelling()
+    {
+        using var h = Make("rtt.log(rtt.expect('colou?r', 500))");
+        h.Transport.Feed("color colour\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["color"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_lazy_quantifier_matches_the_shortest_span()
+    {
+        using var h = Make("""
+            rtt.log(rtt.expect('<.->', 500))
+            rtt.log(rtt.expect('<.->', 500))
+            """);
+        h.Transport.Feed("<a><b>"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["<a>", "<b>"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_patterns_are_case_sensitive()
+    {
+        // oFF must not match [f]-sets; the returned prefix proves the match landed on "off".
+        using var h = Make("rtt.log(rtt.expect('o[f][f]', 500))");
+        h.Transport.Feed("oFF off\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["oFF off"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_negated_set_runs_through_the_separator()
+    {
+        using var h = Make("rtt.log(rtt.expect('[^=]*=', 500))");
+        h.Transport.Feed("led=on\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["led="], h.Log);
+    }
+
+    [Fact]
+    public void Expect_escaped_percent_matches_a_literal_percent()
+    {
+        using var h = Make("rtt.log(rtt.expect('100%%', 500))");
+        h.Transport.Feed("progress: 100%\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["progress: 100%"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_caret_anchor_requires_the_region_start()
+    {
+        using var h = Make("rtt.expect('^VER=%d', 100)");
+        h.Transport.Feed("junk VER=2\n"u8.ToArray());
+        Assert.Throws<ScriptError>(() => h.Host.Run());   // junk precedes the region start
+
+        using var clean = Make("rtt.log(rtt.expect('^VER=%d', 500))");
+        clean.Transport.Feed("VER=2\n"u8.ToArray());
+        Assert.Equal(0, clean.Host.Run());
+        Assert.Equal(["VER=2"], clean.Log);
+    }
+
+    [Fact]
+    public void Expect_dollar_anchor_requires_the_region_end()
+    {
+        // $ means end-of-region: the trailing newline keeps 'end$' from matching -
+        // stream matching must use unanchored patterns (documented by this pin).
+        using var h = Make("rtt.expect('end$', 100)");
+        h.Transport.Feed("off end\n"u8.ToArray());
+        Assert.Throws<ScriptError>(() => h.Host.Run());
+    }
+
+    [Fact]
+    public void Expect_pattern_matches_across_chunk_boundaries()
+    {
+        using var h = Make("rtt.log(rtt.expect('tick=%d+', 500))");
+        h.Transport.Feed("tic"u8.ToArray(), "k=42 off"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["tick=42"], h.Log);
+    }
+
+    [Fact]
+    public void Wait_is_a_passive_tap_for_patterns_too()
+    {
+        using var h = Make("""
+            rtt.log(rtt.wait(200))
+            rtt.log(rtt.expect('v=%d', 500))
+            """);
+        h.Transport.Feed("v=1\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["v=1\n", "v=1"], h.Log);
+    }
+
+    [Fact]
+    public void Malformed_percent_ending_raises_a_script_error()
+    {
+        using var h = Make("rtt.expect('50%', 100)");
+        h.Transport.Feed("50"u8.ToArray());   // matcher must reach the trailing % to hit it
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("malformed", ex.Message);
+    }
+
+    [Fact]
     public void Expect_timeout_raises_script_error()
     {
         using var h = Make("rtt.expect('X', 40)");

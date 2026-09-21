@@ -137,6 +137,33 @@ public class ScriptRuntimeTests
     }
 
     [Fact]
+    public void Expect_honors_an_injected_pattern_matcher()
+    {
+        // The seam LuaScriptHost fills: any matcher strategy can drive Expect - here a CLR
+        // regex stands in for the real Lua engine, pinning consumption through the match end.
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        rt.PatternMatcher = (region, pattern) =>
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(region, pattern);
+            return m.Success ? m.Index + m.Length : null;
+        };
+        t.Feed("n=42 off"u8.ToArray());
+        Assert.Equal("n=42", rt.Expect(@"\d+", 100));
+        Assert.Equal("", rt.Wait(20));   // consumed through the match end; the tap sees no new data
+    }
+
+    [Fact]
+    public void Injected_matcher_returning_null_keeps_pumping_until_timeout()
+    {
+        // null = "not yet", not "failed": the pump keeps waiting for more data.
+        var rt = MakeRuntime(new TestRttTransport());
+        rt.PatternMatcher = (_, _) => null;
+        var ex = Assert.Throws<ScriptError>(() => rt.Expect("x", 40));
+        Assert.Contains("not found", ex.Message);
+    }
+
+    [Fact]
     public void Wait_preserves_every_byte_value_internally()
     {
         var t = new TestRttTransport();
