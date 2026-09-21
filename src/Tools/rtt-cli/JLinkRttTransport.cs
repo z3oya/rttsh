@@ -1,20 +1,19 @@
-using System.Runtime.InteropServices;
 using Toolbox.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>IRttTransport over the SEGGER J-Link DLL (mirrors the reference rtt-t2 tool), reading
-/// and writing the up/down channel pair selected by RttConnectionConfig.Channel (default 0).
+/// and writing the RTT up/down channel pair selected by RttConnectionConfig.Channel (default 0).
+/// Connection sequencing lives in JLinkConnection; this class adds RTT START/STOP, the poll thread
+/// and the channel read/write paths.
 ///
-/// Threading: the DLL is NOT thread-safe; the reference tool gets serialization for free from Qt's single
-/// UI thread. Here every native call runs under _nativeLock. The poll thread owns the failure path: on a
-/// negative read it performs the DLL teardown itself and then raises Error - an external Close() that raced
-/// it just sees the link already closed (idempotent). Close() stops the poll thread by clearing _open, joins
-/// it OUTSIDE the lock (it may be inside a read), then tears down.</summary>
+/// Threading: the DLL is NOT thread-safe; every native call runs under _nativeLock. The poll thread
+/// owns the failure path: on a negative read it performs the DLL teardown itself and then raises
+/// Error - an external Close() that raced it just sees the link already closed (idempotent). Close()
+/// stops the poll thread by clearing _open, joins it OUTSIDE the lock (it may be inside a read),
+/// then tears down.</summary>
 internal sealed class JLinkRttTransport : IRttTransport
 {
-    /// <summary>RTT up/down channel pair served by this transport; set from the config in Open().</summary>
-    public int Channel { get; private set; }
     private const int PollBytes = 8192;
     private const int PollIdleMs = 2;
     /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
@@ -23,16 +22,14 @@ internal sealed class JLinkRttTransport : IRttTransport
     private const int WriteRetryDeadlineMs = 1500;
     private const int WriteRetryDelayMs = 25;
 
-    private readonly JLinkLibrary _lib = new();
+    private readonly JLinkConnection _connection = new();
     private readonly object _nativeLock = new();
     private readonly byte[] _rxBuffer = new byte[PollBytes];
     private Thread? _pollThread;
     private volatile bool _open;
 
-    // OpenEx invokes these line-by-line on DLL-internal threads; instance fields keep the delegates
-    // alive for the DLL's lifetime and carry no process-global state (unlike the reference C++ thunk).
-    private JLinkNative.LogFn? _logThunk;
-    private JLinkNative.LogFn? _errorThunk;
+    /// <summary>RTT up/down channel pair served by this transport; set from the config in Open().</summary>
+    public int Channel { get; private set; }
 
     public bool IsOpen => _open;
 
@@ -41,6 +38,11 @@ internal sealed class JLinkRttTransport : IRttTransport
 
     public event Action<byte[]>? DataReceived;
     public event Action<Exception>? Error;
+
+    public JLinkRttTransport()
+    {
+        _connection.LogLine += line => LogLine?.Invoke(line);
+    }
 
     public void Open(RttConnectionConfig config)
     {
@@ -52,62 +54,15 @@ internal sealed class JLinkRttTransport : IRttTransport
         {
             if (_open) throw new IOException("The RTT link is already open.");
 
-            Channel = config.Channel;
-
-            if (!_lib.Load(config.DllPath, out string loadError))
-                throw new IOException(loadError);
-
-            bool dllOpened = false;
             try
             {
-                // Probe selection first, then OpenEx - same order as the reference tool.
-                if (config.SerialNo > 0)
-                {
-                    if (_lib.EmuSelectByUsbSn!(config.SerialNo) < 0)
-                        throw new IOException($"J-Link with serial {config.SerialNo} not found.");
-                }
-                else if (_lib.SelectUsb!(0) != 0)
-                {
-                    throw new IOException("No default J-Link probe found.");
-                }
-
-                _logThunk = OnDllLog;
-                _errorThunk = OnDllError;
-                IntPtr openError = _lib.OpenEx!(_logThunk, _errorThunk);
-                if (openError != IntPtr.Zero)
-                    throw new IOException($"JLINKARM_OpenEx: {Marshal.PtrToStringAnsi(openError) ?? "unknown error"}");
-                dllOpened = true;
-
-                _lib.TifSelect!(config.Interface == RttInterface.Jtag ? JLinkNative.TifJtag : JLinkNative.TifSwd);
-                _lib.SetSpeed!(config.SpeedKhz);
-
-                var execError = new byte[256];
-                _lib.ExecCommand!($"device = {config.Chip}", execError, execError.Length);
-                string execMessage = JLinkLibrary.TrimAtNul(execError);
-                if (execMessage.Length > 0)
-                    throw new IOException($"ExecCommand(device = {config.Chip}): {execMessage}");
-
-                if (_lib.IsConnected!() == 0 && _lib.Connect!() < 0)
-                    throw new IOException($"Failed to connect target (chip={config.Chip}).");
-
-                if (config.ResetOnConnect)
-                {
-                    _lib.Reset!();
-                    // J-Link resets halt the core (vector catch: "Halt core after reset"). A halted
-                    // CPU produces no RTT traffic - the stream stalls once the stale buffer content
-                    // from before the reset is drained. Resume it so the firmware actually runs.
-                    if (_lib.IsHalted?.Invoke() == 1)
-                    {
-                        OnLog("Core is halted after reset - resuming via Go().", isError: false);
-                        _lib.Go?.Invoke();
-                    }
-                }
-
+                Channel = config.Channel;
+                _connection.Open(config);   // probe, DLL open, target connect (no RTT yet)
                 StartRtt(config);
             }
             catch
             {
-                if (dllOpened) _lib.Close!();   // reset the DLL so a retry starts clean
+                _connection.Close();   // reset the DLL so a retry starts clean
                 throw;
             }
 
@@ -132,7 +87,7 @@ internal sealed class JLinkRttTransport : IRttTransport
         }
 
         var start = new JLinkNative.RttStartConfig(address);   // 0 = SDK scans RAM for _SEGGER RTT
-        if (_lib.RttControlStart!(JLinkNative.RttCmdStart, ref start) < 0)
+        if (_connection.Library.RttControlStart!(JLinkNative.RttCmdStart, ref start) < 0)
             throw new IOException($"Failed to start RTT (addr=0x{address:X}). If the block is not auto-detected, pass --rtt-addr and --rtt-range.");
     }
 
@@ -141,15 +96,15 @@ internal sealed class JLinkRttTransport : IRttTransport
     private uint ScanRttAddress(uint start, uint range)
     {
         var dump = new byte[range];
-        int got = _lib.ReadMemEx!(start, range, dump, JLinkNative.Access8);
+        int got = _connection.Library.ReadMemEx!(start, range, dump, JLinkNative.Access8);
         if (got <= 0) return 0;
         int index = RttControlBlock.FindSignature(dump.AsSpan(0, got));
         return index < 0 ? 0 : start + (uint)index;
     }
 
-    /// <summary>Polls the configured up-channel at a fixed ~2ms cadence (matching the reference tool). A negative
-    /// read fails the link; a stretch of empty reads with a halted core does too - a silent stall
-    /// would otherwise look exactly like a quiet target.</summary>
+    /// <summary>Polls the configured up-channel at a fixed ~2ms cadence (matching the reference tool).
+    /// A negative read fails the link; a stretch of empty reads with a halted core does too - a
+    /// silent stall would otherwise look exactly like a quiet target.</summary>
     private void PollLoop()
     {
         int idlePolls = 0;
@@ -159,7 +114,7 @@ internal sealed class JLinkRttTransport : IRttTransport
             lock (_nativeLock)
             {
                 if (!_open) return;   // external Close() in progress
-                read = _lib.RttRead!(Channel, _rxBuffer, PollBytes);
+                read = _connection.Library.RttRead!(Channel, _rxBuffer, PollBytes);
             }
 
             if (read < 0)
@@ -181,7 +136,7 @@ internal sealed class JLinkRttTransport : IRttTransport
                 // Only on quiet links, ~1/second at most; IsHalted is a single DAP read.
                 lock (_nativeLock)
                 {
-                    if (_open && _lib.IsHalted?.Invoke() == 1)
+                    if (_open && _connection.Library.IsHalted?.Invoke() == 1)
                     {
                         FailLink("RTT stalled: the target core is halted (debugger attached or reset left it halted). Reconnect with --reset to resume it.");
                         return;
@@ -207,7 +162,7 @@ internal sealed class JLinkRttTransport : IRttTransport
     /// <summary>Writes to the down channel, retrying while the DLL reports a full buffer: right
     /// after RTT START its buffer view has not settled yet (an immediate write reports 0
     /// written), and a stalled target drains the ring slowly. The deadline is per progress: any
-    /// partial write resets it, so large payloads take as long as the target needs to drain,
+    /// partial write restarts it, so large payloads take as long as the target needs to drain,
     /// while a target that reads nothing fails after WriteRetryDeadlineMs of zero progress with
     /// a message that names the actual fault.</summary>
     public void Write(ReadOnlySpan<byte> data)
@@ -222,7 +177,7 @@ internal sealed class JLinkRttTransport : IRttTransport
             while (true)
             {
                 var chunk = written == 0 ? buffer : buffer[written..];
-                int n = _lib.RttWrite!(Channel, chunk, chunk.Length);
+                int n = _connection.Library.RttWrite!(Channel, chunk, chunk.Length);
                 if (n < 0)
                     throw new IOException($"RTT write failed (code={n}).");
                 written += n;
@@ -257,8 +212,8 @@ internal sealed class JLinkRttTransport : IRttTransport
     private void TeardownDll()
     {
         // Reference tool order: RTT STOP, then JLINKARM_Close. The library stays loaded for a retry.
-        _lib.RttControlStop?.Invoke(JLinkNative.RttCmdStop, IntPtr.Zero);
-        _lib.Close?.Invoke();
+        _connection.Library.RttControlStop?.Invoke(JLinkNative.RttCmdStop, IntPtr.Zero);
+        _connection.Close();
     }
 
     public void Dispose()
@@ -266,26 +221,7 @@ internal sealed class JLinkRttTransport : IRttTransport
         Close();
         lock (_nativeLock)
         {
-            _lib.Dispose();   // frees the DLL
-            _logThunk = null;
-            _errorThunk = null;
-        }
-    }
-
-    private void OnDllLog(string message) => OnLog(message, isError: false);
-    private void OnDllError(string message) => OnLog(message, isError: true);
-
-    private void OnLog(string message, bool isError)
-    {
-        try
-        {
-            message = message.Trim();
-            if (message.Length > 0)
-                LogLine?.Invoke(isError ? $"LOG: [ERR] {message}" : $"LOG: {message}");
-        }
-        catch
-        {
-            // Never leak an exception into a native frame.
+            _connection.Dispose();
         }
     }
 }

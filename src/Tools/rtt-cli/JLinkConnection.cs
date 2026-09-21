@@ -8,7 +8,8 @@ namespace Toolbox.Tools.RttCli;
 /// RTT START is deliberately NOT part of this - only the transport starts RTT.
 /// Threading: the DLL is not thread-safe; the owner serializes all Library calls. The log/error
 /// thunks are instance fields to keep them alive for the DLL's lifetime.
-/// Open/Close/Dispose participate in the same lock; there is no internal locking and no already-open guard - the owner enforces open/close sequencing.</summary>
+/// The owner must call Open/Close/Dispose under the same lock that serializes Library calls; the class
+/// has no internal locking and no already-open guard - the owner enforces open/close sequencing.</summary>
 internal sealed class JLinkConnection : IDisposable
 {
     private readonly JLinkLibrary _lib = new();
