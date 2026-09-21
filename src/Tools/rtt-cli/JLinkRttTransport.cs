@@ -12,7 +12,9 @@ namespace Toolbox.Tools.RttCli;
 /// it OUTSIDE the lock (it may be inside a read), then tears down.</summary>
 internal sealed class JLinkRttTransport : IRttTransport
 {
-    private const int ChannelIndex = 0;
+    /// <summary>The RTT channel pair this tool serves today. The per-target instance lock keys
+    /// off this same constant; a future --channel turns it into a field set from the config.</summary>
+    public const int Channel = 0;
     private const int PollBytes = 8192;
     private const int PollIdleMs = 2;
     /// <summary>Quiet polls (~2ms each) between core-halt checks on the idle path (~2s at 2ms).</summary>
@@ -155,7 +157,7 @@ internal sealed class JLinkRttTransport : IRttTransport
             lock (_nativeLock)
             {
                 if (!_open) return;   // external Close() in progress
-                read = _lib.RttRead!(ChannelIndex, _rxBuffer, PollBytes);
+                read = _lib.RttRead!(Channel, _rxBuffer, PollBytes);
             }
 
             if (read < 0)
@@ -218,7 +220,7 @@ internal sealed class JLinkRttTransport : IRttTransport
             while (true)
             {
                 var chunk = written == 0 ? buffer : buffer[written..];
-                int n = _lib.RttWrite!(ChannelIndex, chunk, chunk.Length);
+                int n = _lib.RttWrite!(Channel, chunk, chunk.Length);
                 if (n < 0)
                     throw new IOException($"RTT write failed (code={n}).");
                 written += n;
