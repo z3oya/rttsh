@@ -53,6 +53,7 @@ public class CliParsingTests
     {
         var command = Assert.IsType<HelpCommand>(CommandLine.Parse(["send", "--help"]));
         Assert.Contains("text to send", command.Text);
+        Assert.Contains("send -- --value", command.Text);
     }
 
     [Fact]

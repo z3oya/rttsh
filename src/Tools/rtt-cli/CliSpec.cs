@@ -107,7 +107,7 @@ internal static class CliSpec
         Command send = new("send", "send once, optionally wait for a reply");
         Argument<string> payload = new("text")
         {
-            Description = "text to send; \\n \\r \\t \\\\ escapes are interpreted",
+            Description = "text to send; \\n \\r \\t \\\\ escapes are interpreted; to send a value starting with --, use: send -- --value",
         };
         send.Arguments.Add(payload);
 
