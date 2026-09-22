@@ -112,7 +112,7 @@ internal sealed class ScriptRuntime
         {
             if (_linkError is not null) throw new ScriptError($"link failed: {_linkError.Message}");
             if (_cancelRequested) throw new ScriptError($"expect: cancelled before '{pattern}' arrived");
-            throw new ScriptError($"expect: '{pattern}' not found within {timeoutMs} ms");
+            throw new ScriptError($"expect: '{pattern}' not found within {timeoutMs} ms; buffer tail: \"{DescribeTail()}\"");
         }
         string result = region[..end.Value];
         _scanPos += end.Value;
@@ -155,6 +155,31 @@ internal sealed class ScriptRuntime
     }
 
     private string Region() => _pending.ToString(_scanPos, _pending.Length - _scanPos);
+
+    /// <summary>Last ≤80 chars of the pending buffer, control characters and backslashes escaped -
+    /// escaping the introducer too keeps this invertible, so a literal "\n" can never be mistaken
+    /// for a real newline. "What did the pending buffer actually contain" is the first thing a
+    /// failing pattern needs.</summary>
+    private string DescribeTail()
+    {
+        int start = Math.Max(0, _pending.Length - 80);
+        string tail = _pending.ToString(start, _pending.Length - start);
+        var sb = new StringBuilder(tail.Length + 16);
+        foreach (char c in tail)
+            switch (c)
+            {
+                case '\\': sb.Append("\\\\"); break;   // the escape introducer itself, handled first
+                case '\r': sb.Append("\\r"); break;
+                case '\n': sb.Append("\\n"); break;
+                case '\t': sb.Append("\\t"); break;
+                case '"': sb.Append("\\\""); break;
+                default:
+                    if (c < ' ' || c == '\x7f') sb.Append("\\x").Append(((int)c).ToString("x2"));
+                    else sb.Append(c);
+                    break;
+            }
+        return sb.ToString();
+    }
 
     /// <summary>Locates <paramref name="pattern"/> in the scan region. null = the default
     /// (engine-free) literal ordinal search; LuaScriptHost installs Lua's own matcher here so

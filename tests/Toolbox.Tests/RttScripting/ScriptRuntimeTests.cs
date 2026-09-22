@@ -107,6 +107,23 @@ public class ScriptRuntimeTests
     }
 
     [Fact]
+    public void Expect_timeout_includes_buffer_tail()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("boot ok\r\n\u001b[31mrtt> "u8.ToArray());
+        var ex = Assert.Throws<ScriptError>(() => rt.Expect("NEVER", 40));
+        Assert.Contains("buffer tail:", ex.Message);
+        Assert.Contains("rtt> ", ex.Message);
+        Assert.Contains("boot ok", ex.Message);      // ≤80 字符内全量可见
+        Assert.DoesNotContain("\r", ex.Message);     // 控制字符已转义
+        // xunit 的字符串 DoesNotContain 走 culture-sensitive 比较，ESC(U+001B) 是 ICU collation
+        // 的 ignorable 字符——消息里根本没有它也会在 pos 0 零宽"匹配"。逐字符序数检查才可靠。
+        Assert.DoesNotContain(ex.Message, c => c < ' ' || c == '\x7f');   // ANSI ESC 等不裸进消息
+        Assert.Contains("\\x1b", ex.Message);        // ESC 以 \x1b 形式可见
+    }
+
+    [Fact]
     public void Expect_consumes_through_the_match()
     {
         var t = new TestRttTransport();
