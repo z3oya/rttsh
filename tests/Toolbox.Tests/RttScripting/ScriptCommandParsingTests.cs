@@ -59,14 +59,12 @@ public class ScriptCommandParsingTests
     }
 
     [Fact]
-    public void Script_manual_is_a_reference_command()
+    public void Script_manual_option_hints_at_its_replacement()
     {
-        Assert.IsType<ManualCommand>(CommandLine.Parse(["script", "--manual"]));
-    }
-
-    [Fact]
-    public void Script_manual_is_forgiving_about_position()
-    {
-        Assert.IsType<ManualCommand>(CommandLine.Parse(["script", "a.lua", "--manual"]));
+        // the reference moved to its own subcommand; the retired flag says where
+        var first = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "--manual"]));
+        var second = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "a.lua", "--manual"]));
+        Assert.Contains("--manual was removed", first.Message);
+        Assert.Contains("rtt-cli manual", second.Message);
     }
 }

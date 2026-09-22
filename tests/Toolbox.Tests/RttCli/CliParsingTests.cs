@@ -278,6 +278,20 @@ public class CliParsingTests
     }
 
     [Fact]
+    public void Manual_is_a_top_level_command()
+    {
+        Assert.IsType<ManualCommand>(CommandLine.Parse(["manual"]));
+        Assert.IsType<ManualCommand>(CommandLine.Parse(["--chip", "X", "manual"]));
+    }
+
+    [Fact]
+    public void Manual_keeps_its_own_help_page()
+    {
+        var help = Assert.IsType<HelpCommand>(CommandLine.Parse(["manual", "--help"]));
+        Assert.Contains("manual", help.Text);
+    }
+
+    [Fact]
     public void Channel_without_value_is_a_usage_error()
     {
         Assert.Throws<UsageException>(() => CommandLine.Parse(["--chip", "X", "--channel"]));

@@ -105,8 +105,8 @@ internal static class CommandLine
             return new UsageErrorCommand("send: missing <text> payload");
         if (args.Length > 0 && args[0] == "script")
         {
-            if (Array.IndexOf(args, "--manual") >= 0)   // position-independent, as before
-                return new ManualCommand();
+            if (Array.IndexOf(args, "--manual") >= 0)   // retired flag: point at its replacement
+                return new UsageErrorCommand("script: --manual was removed; run 'rtt-cli manual'");
             if (args.Length >= 2 && args[1] == "--eval")
             {
                 if (args.Length < 3)
@@ -144,8 +144,6 @@ internal static class CommandLine
             return new SendCommand(parsed.GetValue(spec.Payload)!, options);
         if (command == spec.Script)
         {
-            if (parsed.GetValue(spec.Manual))
-                return new ManualCommand();   // "rtt-cli --chip X script --manual" (script not at args[0])
             string? path = parsed.GetValue(spec.ScriptFile);
             string? eval = parsed.GetValue(spec.Eval);
             if (eval is not null && path is not null)
@@ -154,6 +152,8 @@ internal static class CommandLine
         }
         if (command == spec.ListDevices)
             return new ListDevicesCommand(options);
+        if (command == spec.Manual)
+            return new ManualCommand();
         return new MonitorCommand(options);   // no subcommand = default monitor
     }
 
@@ -171,6 +171,7 @@ internal static class CommandLine
         if (matched == spec.Send) return ["send", "--help"];
         if (matched == spec.Script) return ["script", "--help"];
         if (matched == spec.ListDevices) return ["list-devices", "--help"];
+        if (matched == spec.Manual) return ["manual", "--help"];
         return ["--help"];
     }
 

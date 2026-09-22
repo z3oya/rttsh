@@ -43,7 +43,7 @@ internal sealed class Spec
     public required Option<string?> Filter { get; init; }
     public required Option<string?> Config { get; init; }
     public required Option<string?> Eval { get; init; }
-    public required Option<bool> Manual { get; init; }
+    public required Command Manual { get; init; }
 }
 
 /// <summary>Option/command declarations plus the small conversion helpers. Error wording
@@ -116,7 +116,7 @@ internal static class CliSpec
         send.Arguments.Add(payload);
 
         Command script = new("script",
-            "run a Lua automation script (rtt.* API; --manual prints the reference)");
+            "run a Lua automation script (rtt.* API; 'rtt-cli manual' prints the reference)");
         Argument<string?> scriptFile = new("file.lua")
         {
             Arity = ArgumentArity.ZeroOrOne,
@@ -137,14 +137,15 @@ internal static class CliSpec
                 return result.Tokens[0].Value;
             },
         };
-        Option<bool> manual = new("--manual") { Description = "print the rtt.* Lua API reference" };
         script.Arguments.Add(scriptFile);
         script.Options.Add(eval);
-        script.Options.Add(manual);
+
+        Command manual = new("manual", "print the reference: config file keys, the rtt.* scripting API, script mechanics");
 
         root.Subcommands.Add(listDevices);
         root.Subcommands.Add(send);
         root.Subcommands.Add(script);
+        root.Subcommands.Add(manual);
         // A root with subcommands demands one ("Required command was not provided") unless
         // it has its own action; Parse never invokes it - the mapping layer turns the
         // matched root into the default monitor command.

@@ -61,7 +61,7 @@ internal static class Program
 
     private static int PrintManual()
     {
-        Console.WriteLine(LuaManual.Text);
+        Console.WriteLine(Manual.Text);
         return 0;
     }
 
