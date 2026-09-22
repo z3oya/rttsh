@@ -108,7 +108,8 @@ internal sealed class JLinkRttTransport : IRttTransport
     /// <summary>Polls the configured up-channel at the reference tool's ~2ms idle cadence - a read
     /// that filled the buffer is re-read immediately instead (see drain mode in the loop). A negative
     /// read fails the link; a stretch of empty reads with a halted core does too - a silent stall
-    /// would otherwise look exactly like a quiet target.</summary>
+    /// would otherwise look exactly like a quiet target. A throwing DataReceived subscriber fails
+    /// the link as well: the poll thread must never die.</summary>
     private void PollLoop()
     {
         int idlePolls = 0;
@@ -132,7 +133,18 @@ internal sealed class JLinkRttTransport : IRttTransport
                 idlePolls = 0;
                 var data = new byte[read];
                 Array.Copy(_rxBuffer, data, read);
-                DataReceived?.Invoke(data);
+                try
+                {
+                    DataReceived?.Invoke(data);
+                }
+                catch (Exception ex)
+                {
+                    // A throwing subscriber (--log write failure, closed console) is a dead delivery
+                    // path: fail the link cleanly instead of letting the exception kill this thread.
+                    // Never Close() from in here - it would Join the poll thread we are running on.
+                    FailLink($"RTT data handler failed: {ex.Message}");
+                    return;
+                }
             }
             else if (++idlePolls >= IdlePollsPerHaltCheck)
             {

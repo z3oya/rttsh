@@ -26,10 +26,20 @@ internal static class RttLogFile
 
     /// <summary>Appends one batch and flushes immediately: the capture must survive a hard kill,
     /// which one flushed write per poll batch gets cheaply. Called on the poll thread only, so no
-    /// locking is needed - there is exactly one subscriber per session.</summary>
+    /// locking is needed - there is exactly one subscriber per session. A failed write is rethrown
+    /// as an IOException naming --log; the transport turns any subscriber exception into a clean
+    /// link failure, and this message is all the user sees.</summary>
     public static void Append(FileStream stream, byte[] data)
     {
-        stream.Write(data, 0, data.Length);
-        stream.Flush();
+        try
+        {
+            stream.Write(data, 0, data.Length);
+            stream.Flush();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                   or ObjectDisposedException)
+        {
+            throw new IOException($"--log: write failed: {ex.Message}", ex);
+        }
     }
 }

@@ -36,4 +36,24 @@ public class RttRendererLogPathTests
             new RttRenderer(options, TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);
     }
+
+    // A write that fails mid-session (disk full, removed drive, disposed stream) must come back as
+    // an IOException naming --log: the transport fails the link on it, and that message is all the
+    // user sees. A disposed stream is the deterministically testable stand-in for disk-full.
+    [Fact]
+    public void Failed_append_names_the_log_option()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"rtt-cli-test-{Guid.NewGuid():N}.log");
+        var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+        stream.Dispose();   // a write to it now throws ObjectDisposedException → the --log wrap
+        try
+        {
+            var ex = Assert.Throws<IOException>(() => RttLogFile.Append(stream, [1, 2, 3]));
+            Assert.Contains("--log", ex.Message);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
