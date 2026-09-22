@@ -119,7 +119,7 @@ internal sealed class JLinkRttTransport : IRttTransport
 
             if (read < 0)
             {
-                FailLink($"RTT read error (code={read}).");
+                FailLink($"RTT read error (code={read}: {RttFailureContext(read)}).");
                 return;
             }
 
@@ -159,6 +159,23 @@ internal sealed class JLinkRttTransport : IRttTransport
         Error?.Invoke(new IOException(message));
     }
 
+    /// <summary>Human-readable context for a negative JLINK_RTTERMINAL result. The mapped codes follow
+    /// pylink-square 2.0.1's JLinkGlobalErrors/JLinkRTTErrors (the J-Link SDK global error codes), but
+    /// this table is only a subset of them, so unmapped codes stay honest - a contention hint, never
+    /// a guessed meaning.</summary>
+    internal static string RttFailureContext(int code) => code switch
+    {
+        -1 => "unspecified DLL error",
+        -2 => "RTT control block not found (check --rtt-addr, or that the firmware runs and RTT is built in)",
+        -256 => "no connection to the probe",
+        -257 => "probe communication error",
+        -258 => "DLL not open",
+        -259 => "probe VCC/Vref failure",
+        -261 => "no CPU found (wrong chip name, or the core is halted?)",
+        -274 => "CPU in low-power mode (terminal output may be stalled)",
+        _ => "code not in the verified table (possible probe contention - is another debugger or RTT tool attached?)",
+    };
+
     /// <summary>Writes to the down channel, retrying while the DLL reports a full buffer: right
     /// after RTT START its buffer view has not settled yet (an immediate write reports 0
     /// written), and a stalled target drains the ring slowly. The deadline is per progress: any
@@ -179,7 +196,7 @@ internal sealed class JLinkRttTransport : IRttTransport
                 var chunk = written == 0 ? buffer : buffer[written..];
                 int n = _connection.Library.RttWrite!(Channel, chunk, chunk.Length);
                 if (n < 0)
-                    throw new IOException($"RTT write failed (code={n}).");
+                    throw new IOException($"RTT write failed (code={n}: {RttFailureContext(n)}).");
                 written += n;
                 if (written >= buffer.Length) return;
                 if (!_open) throw new IOException("The RTT link is not open.");
