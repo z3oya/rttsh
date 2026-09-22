@@ -249,6 +249,11 @@ internal static class Program
         if (options.ScriptTimeoutMs is < 0)
             throw new UsageException("script: --script-timeout must be >= 0 ms (0 = off)");
 
+        // --log is a root option, so script accepts it too. Opened here (with the other option
+        // checks) so a bad path fails before the probe is touched, and wired to DataReceived
+        // because script has no RttRenderer to do the capture.
+        using var logStream = RttLogFile.Open(options.LogFile);
+
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
         using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
@@ -256,6 +261,8 @@ internal static class Program
         byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
 
         using var transport = new JLinkRttTransport();
+        if (logStream is not null)
+            transport.DataReceived += data => RttLogFile.Append(logStream, data);
         var runtime = new ScriptRuntime(transport, encoding, eol, WriteDiag, options.ScriptTimeoutMs ?? 0);
 
         try

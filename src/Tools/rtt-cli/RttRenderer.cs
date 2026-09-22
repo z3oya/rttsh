@@ -28,8 +28,7 @@ internal sealed class RttRenderer : IDisposable
         _decoder = TextCodec.Resolve(options.EffectiveEncoding).GetDecoder();
         _ui = ui;
         _hex = options.Hex;
-        if (options.LogFile is { Length: > 0 } path)
-            _logStream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, bufferSize: 4 * 1024);
+        _logStream = RttLogFile.Open(options.LogFile);
     }
 
     /// <summary>Called on the transport's poll thread.</summary>
@@ -38,13 +37,7 @@ internal sealed class RttRenderer : IDisposable
         lock (_consoleLock)
         {
             if (data.Length == 0) return;
-            if (_logStream is not null)
-            {
-                // Flush each batch: the capture must survive a hard kill, and one WriteFile
-                // per batch is still far cheaper than the old reopen-per-batch.
-                _logStream.Write(data, 0, data.Length);
-                _logStream.Flush();
-            }
+            if (_logStream is not null) RttLogFile.Append(_logStream, data);
             if (_hex) RenderHex(data);
             else RenderText(data);
         }
