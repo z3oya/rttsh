@@ -76,7 +76,10 @@ internal sealed class JLinkRttTransport : IRttTransport
         }
     }
 
-    /// <summary>RTT START with either the SDK auto-scan or the manually located control block.</summary>
+    /// <summary>Starts RTT. A successful START is the whole contract, matching the reference
+    /// tool's connect path. Deliberately no ready check: the SDK publishes the control block
+    /// asynchronously after START, so its buffer queries report nothing until that background
+    /// scan finishes - such a check could only pass by retrying, which this path does not do.</summary>
     private void StartRtt(RttConnectionConfig config)
     {
         uint address = config.RttAddress;
@@ -102,9 +105,10 @@ internal sealed class JLinkRttTransport : IRttTransport
         return index < 0 ? 0 : start + (uint)index;
     }
 
-    /// <summary>Polls the configured up-channel at a fixed ~2ms cadence (matching the reference tool).
-    /// A negative read fails the link; a stretch of empty reads with a halted core does too - a
-    /// silent stall would otherwise look exactly like a quiet target.</summary>
+    /// <summary>Polls the configured up-channel at the reference tool's ~2ms idle cadence - a read
+    /// that filled the buffer is re-read immediately instead (see drain mode in the loop). A negative
+    /// read fails the link; a stretch of empty reads with a halted core does too - a silent stall
+    /// would otherwise look exactly like a quiet target.</summary>
     private void PollLoop()
     {
         int idlePolls = 0;
@@ -133,7 +137,7 @@ internal sealed class JLinkRttTransport : IRttTransport
             else if (++idlePolls >= IdlePollsPerHaltCheck)
             {
                 idlePolls = 0;
-                // Only on quiet links, ~1/second at most; IsHalted is a single DAP read.
+                // Only on quiet links, ~2 s apart at the idle cadence; IsHalted is a single DAP read.
                 lock (_nativeLock)
                 {
                     if (_open && _connection.Library.IsHalted?.Invoke() == 1)
@@ -143,7 +147,13 @@ internal sealed class JLinkRttTransport : IRttTransport
                     }
                 }
             }
-            Thread.Sleep(PollIdleMs);
+            // Drain mode: a full buffer means the target is producing at line speed - read
+            // again immediately instead of waiting out the idle cadence. Empty reads keep the
+            // ~2 ms idle cadence (and the halt-check pacing built on it); during a burst that
+            // never goes quiet the halt check simply doesn't run, and self-silencing faults
+            // end the burst on their own.
+            if (read < PollBytes)
+                Thread.Sleep(PollIdleMs);
         }
     }
 
