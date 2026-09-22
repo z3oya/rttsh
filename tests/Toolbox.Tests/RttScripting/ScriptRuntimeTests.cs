@@ -124,6 +124,38 @@ public class ScriptRuntimeTests
     }
 
     [Fact]
+    public void Expect_timeout_tail_escapes_every_branch()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        // RX is viewed as Latin-1, so each byte below is one tail char: tab, \n, quote,
+        // backslash, DEL, \x01 - and a high byte that must pass through unescaped.
+        t.Feed(new byte[] { (byte)'A', (byte)'\t', (byte)'B', (byte)'\n', (byte)'C', (byte)'"',
+                            (byte)' ', (byte)'D', (byte)'\\', (byte)'E', 0x7f, 0x01, 0xE9 });
+        var ex = Assert.Throws<ScriptError>(() => rt.Expect("NEVER", 40));
+        Assert.Contains("\\t", ex.Message);
+        Assert.Contains("\\n", ex.Message);
+        Assert.Contains("\\\"", ex.Message);
+        Assert.Contains("\\\\", ex.Message);   // the introducer doubled: the tail stays invertible
+        Assert.Contains("\\x7f", ex.Message);
+        Assert.Contains("\\x01", ex.Message);
+        Assert.Contains("\u00E9", ex.Message);   // printable Latin-1 passes through raw
+        Assert.DoesNotContain(ex.Message, c => c < ' ' || c == '\x7f');
+    }
+
+    [Fact]
+    public void Expect_timeout_tail_keeps_only_the_last_80_chars()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed(new byte[] { 0x01 }.Concat(Enumerable.Repeat((byte)'a', 100)).ToArray());
+        var ex = Assert.Throws<ScriptError>(() => rt.Expect("NEVER", 40));
+        Assert.Contains(new string('a', 80), ex.Message);
+        Assert.DoesNotContain(new string('a', 81), ex.Message);
+        Assert.DoesNotContain("\\x01", ex.Message);   // the cut-off head did not sneak back in
+    }
+
+    [Fact]
     public void Expect_consumes_through_the_match()
     {
         var t = new TestRttTransport();

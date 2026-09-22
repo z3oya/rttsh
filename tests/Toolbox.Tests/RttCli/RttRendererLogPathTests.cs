@@ -56,4 +56,32 @@ public class RttRendererLogPathTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public void Open_returns_null_without_a_path()
+    {
+        Assert.Null(RttLogFile.Open(null));
+        Assert.Null(RttLogFile.Open(""));
+    }
+
+    // The happy path: --log actually captures, batches in order, and the bytes are on disk once
+    // the renderer (and with it the stream) is disposed.
+    [Fact]
+    public void Log_captures_batches_in_order_until_dispose()
+    {
+        string path = Path.Combine(Path.GetTempPath(), $"rtt-cli-test-{Guid.NewGuid():N}.log");
+        try
+        {
+            using (var renderer = new RttRenderer(new CommandLineOptions { LogFile = path }, TextWriter.Null, new object()))
+            {
+                renderer.OnData("hello "u8.ToArray());
+                renderer.OnData("rtt"u8.ToArray());
+            }
+            Assert.Equal("hello rtt"u8.ToArray(), File.ReadAllBytes(path));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
