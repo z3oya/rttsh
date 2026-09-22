@@ -114,7 +114,7 @@ internal static class Program
             }
 
             Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
-            byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
+            byte[] eol = PayloadCodec.Terminator(options.Eol, options.EffectiveEncoding);
 
             void SendInputLine(string line)
             {
@@ -202,13 +202,10 @@ internal static class Program
         RttConnectionConfig config = options.ToConnectionConfig(resetDefault: false);
         using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
-        byte[] payload = EncodePayload(command.Payload, options);
+        byte[] payload = PayloadCodec.Encode(command.Payload, options.EffectiveEncoding, options.Hex);
         // Line targets need a terminator to execute; --hex sends raw bytes untouched.
         if (!options.Hex)
-        {
-            Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
-            payload = [.. payload, .. encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf))];
-        }
+            payload = [.. payload, .. PayloadCodec.Terminator(options.Eol, options.EffectiveEncoding)];
 
         using var transport = new JLinkRttTransport();
         using var renderer = new RttRenderer(options.EffectiveEncoding, options.Hex, options.LogFile, Console.Out, ConsoleLock);
@@ -258,7 +255,7 @@ internal static class Program
         using TargetLock? guard = TargetLock.TryAcquire(config, Console.Error);
         if (guard is null) return 1;   // TryAcquire already wrote the "already held" warning
         Encoding encoding = TextCodec.Resolve(options.EffectiveEncoding);
-        byte[] eol = encoding.GetBytes(EolText(options.Eol ?? TextEol.Lf));
+        byte[] eol = PayloadCodec.Terminator(options.Eol, options.EffectiveEncoding);
 
         using var transport = new JLinkRttTransport();
         if (logStream is not null)
@@ -347,44 +344,6 @@ internal static class Program
         };
     }
 
-    private static byte[] EncodePayload(string payload, CommandLineOptions options)
-    {
-        if (options.Hex)
-        {
-            if (!HexCodec.TryParse(payload, out byte[] bytes, out string? error))
-                throw new UsageException($"--hex: {error}");
-            return bytes;
-        }
-        return TextCodec.Resolve(options.EffectiveEncoding).GetBytes(UnescapeSendText(payload));
-    }
-
-    /// <summary>Interprets \n \r \t \\ in send text: shell quoting for a literal newline varies
-    /// (PowerShell needs `n), and C-style escapes are what users naturally type. Unknown
-    /// escapes stay as-is.</summary>
-    private static string UnescapeSendText(string text)
-    {
-        var sb = new StringBuilder(text.Length);
-        for (int i = 0; i < text.Length; i++)
-        {
-            char c = text[i];
-            if (c != '\\' || i + 1 >= text.Length)
-            {
-                sb.Append(c);
-                continue;
-            }
-            char next = text[++i];
-            switch (next)
-            {
-                case 'n': sb.Append('\n'); break;
-                case 'r': sb.Append('\r'); break;
-                case 't': sb.Append('\t'); break;
-                case '\\': sb.Append('\\'); break;
-                default: sb.Append(c).Append(next); break;
-            }
-        }
-        return sb.ToString();
-    }
-
     // ---- list-devices: dump the DLL device database ----------------------------------
 
     private static int ListDevices(ListDevicesCommand command)
@@ -407,24 +366,9 @@ internal static class Program
                 || ContainsIgnoreCase(r.Manufacturer, filter)
                 || ContainsIgnoreCase(r.Core, filter)).ToList();
         }
-        PrintDeviceTable(records);
+        DeviceTable.Format(records, Console.Out);
         Console.Error.WriteLine($"{records.Count} device(s).");
         return 0;
-    }
-
-    private static void PrintDeviceTable(List<JLinkDeviceRecord> records)
-    {
-        int nameWidth = Math.Clamp(records.Max(r => r.Name.Length), 8, 40);
-        const int manuWidth = 14;
-        const int coreWidth = 12;
-        Console.WriteLine($"{"NAME".PadRight(nameWidth)} {"MANUFACTURER".PadRight(manuWidth)} {"CORE".PadRight(coreWidth)} {"FLASH",8} {"RAM",8}");
-        foreach (var record in records)
-        {
-            Console.WriteLine($"{Truncate(record.Name, nameWidth).PadRight(nameWidth)} " +
-                $"{Truncate(record.Manufacturer, manuWidth).PadRight(manuWidth)} " +
-                $"{Truncate(record.Core, coreWidth).PadRight(coreWidth)} " +
-                $"{SizeText(record.FlashBytes),8} {SizeText(record.RamBytes),8}");
-        }
     }
 
     // ---- shared helpers ----------------------------------------------------------------
@@ -472,26 +416,6 @@ internal static class Program
         Console.Error.WriteLine("Run 'rtt-cli --help' for usage.");
         return 2;
     }
-
-    private static string EolText(TextEol eol) => eol switch
-    {
-        TextEol.Lf => "\n",
-        TextEol.Cr => "\r",
-        TextEol.CrLf => "\r\n",
-        TextEol.None => "",
-        _ => "\n",
-    };
-
-    private static string SizeText(uint bytes) => bytes switch
-    {
-        0 => "-",
-        < 1024 => bytes.ToString(),
-        < 1024 * 1024 => $"{bytes / 1024}K",
-        _ => $"{bytes / (1024 * 1024)}M",
-    };
-
-    private static string Truncate(string text, int width) =>
-        text.Length <= width ? text : text[..(width - 1)] + "…";
 
     private static bool ContainsIgnoreCase(string text, string value) =>
         text.Contains(value, StringComparison.OrdinalIgnoreCase);
