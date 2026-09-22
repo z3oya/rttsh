@@ -12,7 +12,7 @@ internal static class DeviceListing
             Console.Error.WriteLine($"rtt-cli: {error}");
             return 1;
         }
-        if (!library.TryEnumerateDevices(out List<JLinkDeviceRecord> records, out error))
+        if (!JLinkDeviceDatabase.TryEnumerate(library, out List<JLinkDeviceRecord> records, out error))
         {
             Console.Error.WriteLine($"rtt-cli: {error}");
             return 1;

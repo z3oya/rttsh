@@ -4,11 +4,12 @@ using Toolbox.Core.Rtt;
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>Shared J-Link connection sequence: probe select, DLL open, target connect, optional
-/// reset+resume. Extracted from JLinkRttTransport so the connect sequence has one owner;
-/// RTT START is deliberately NOT part of this - only the transport starts RTT.
-/// Threading: the DLL is not thread-safe; the owner serializes all Library calls. The log/error
+/// reset+resume - plus the RTT native-call facade (RttStart/RttStop/RttRead/RttWrite/ReadMemory/
+/// IsHalted), so the raw JLinkLibrary stays private and every DLL call funnels through this class.
+/// RTT START is deliberately NOT part of Open - only the transport starts RTT.
+/// Threading: the DLL is not thread-safe; the owner serializes all native calls. The log/error
 /// thunks are instance fields to keep them alive for the DLL's lifetime.
-/// The owner must call Open/Close/Dispose under the same lock that serializes Library calls; the class
+/// The owner must call Open/Close/Dispose under the same lock that serializes the facade calls; the class
 /// has no internal locking and no already-open guard - the owner enforces open/close sequencing.</summary>
 internal sealed class JLinkConnection : IDisposable
 {
@@ -17,7 +18,7 @@ internal sealed class JLinkConnection : IDisposable
     private JLinkNative.LogFn? _errorThunk;
     private bool _open;
 
-    public JLinkLibrary Library => _lib;
+    private JLinkLibrary Library => _lib;
 
     /// <summary>Raised on a DLL thread for each J-Link log/error line (connection progress, RTT scans).</summary>
     public event Action<string>? LogLine;
@@ -26,9 +27,11 @@ internal sealed class JLinkConnection : IDisposable
     /// with an actionable message; on failure the DLL is closed again so a retry starts clean.</summary>
     public void Open(RttConnectionConfig config)
     {
+        // Clamp BEFORE the chip check: Clamped() trims the chip name, so a whitespace-only
+        // --chip fails right here with the message below instead of deep inside ExecCommand.
+        config = config.Clamped();
         if (string.IsNullOrEmpty(config.Chip))
             throw new IOException("No target device specified.");
-        config = config.Clamped();
 
         if (!_lib.Load(config.DllPath, out string loadError))
             throw new IOException(loadError);
@@ -104,6 +107,31 @@ internal sealed class JLinkConnection : IDisposable
         _logThunk = null;
         _errorThunk = null;
     }
+
+    // ---- native-call facade -----------------------------------------------------------------
+    // Every DLL call the transport makes funnels through these forwarders so the raw library
+    // stays private. Pure forwarding - no locking (the owner's _nativeLock serializes everything,
+    // including Open/Close/Dispose) and no open guard (the owner checks). RttStop/IsHalted stay
+    // null-defensive (?.), the rest assume the export resolved (!).
+
+    /// <summary>JLINK_RTTERMINAL(START). The config marshals as a ref struct; passing it by value
+    /// copies the block once - the native layout is unchanged.</summary>
+    public int RttStart(JLinkNative.RttStartConfig config) => Library.RttControlStart!(JLinkNative.RttCmdStart, ref config);
+
+    /// <summary>JLINK_RTTERMINAL(STOP).</summary>
+    public void RttStop() => Library.RttControlStop?.Invoke(JLinkNative.RttCmdStop, IntPtr.Zero);
+
+    /// <summary>JLINK_RTTERMINAL_Read.</summary>
+    public int RttRead(int channel, byte[] buffer, int maxLength) => Library.RttRead!(channel, buffer, maxLength);
+
+    /// <summary>JLINK_RTTERMINAL_Write.</summary>
+    public int RttWrite(int channel, byte[] buffer, int size) => Library.RttWrite!(channel, buffer, size);
+
+    /// <summary>JLINKARM_ReadMemEx, fixed 8-bit access (RTT scans only ever read bytes).</summary>
+    public int ReadMemory(uint address, uint numBytes, byte[] buffer) => Library.ReadMemEx!(address, numBytes, buffer, JLinkNative.Access8);
+
+    /// <summary>JLINKARM_IsHalted; false when the export is missing (defensive, as before).</summary>
+    public bool IsHalted() => Library.IsHalted?.Invoke() == 1;
 
     private void OnDllLog(string message) => OnLog(message, isError: false);
     private void OnDllError(string message) => OnLog(message, isError: true);
