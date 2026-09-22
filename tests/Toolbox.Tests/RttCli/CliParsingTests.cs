@@ -227,7 +227,29 @@ public class CliParsingTests
     public void List_devices_parses_the_filter()
     {
         var command = Assert.IsType<ListDevicesCommand>(CommandLine.Parse(["list-devices", "--filter", "stm32"]));
-        Assert.Equal("stm32", command.Filter);
+        Assert.Equal("stm32", command.Options.DeviceFilter);
+    }
+
+    [Theory]
+    [InlineData("--config")]
+    [InlineData("-c")]
+    public void Config_option_parses_onto_every_command(string flag)
+    {
+        var monitor = Assert.IsType<MonitorCommand>(CommandLine.Parse([flag, "a.json", "--chip", "X"]));
+        Assert.Equal("a.json", monitor.Options.ConfigPath);
+        var send = Assert.IsType<SendCommand>(CommandLine.Parse(["send", "hi", flag, "b.json"]));
+        Assert.Equal("b.json", send.Options.ConfigPath);
+        var script = Assert.IsType<ScriptCommand>(CommandLine.Parse(["script", "run.lua", flag, "c.json"]));
+        Assert.Equal("c.json", script.Options.ConfigPath);
+        var list = Assert.IsType<ListDevicesCommand>(CommandLine.Parse(["list-devices", flag, "d.json"]));
+        Assert.Equal("d.json", list.Options.ConfigPath);
+    }
+
+    [Fact]
+    public void Config_defaults_to_null()
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse(["--chip", "X"]));
+        Assert.Null(command.Options.ConfigPath);
     }
 
     [Fact]

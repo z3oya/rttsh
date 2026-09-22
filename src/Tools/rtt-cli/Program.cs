@@ -32,18 +32,32 @@ internal static class Program
         }
     }
 
-    private static int Run(RttCommand command) => command switch
+    private static int Run(RttCommand command)
     {
-        HelpCommand c => PrintHelp(c),
-        ManualCommand => PrintManual(),
-        VersionCommand => PrintVersion(),
-        UsageErrorCommand c => UsageError(c.Message),
-        ListDevicesCommand c => DeviceListing.Run(c),
-        MonitorCommand c => MonitorSession.Run(c.Options),
-        SendCommand c => SendOnce.Run(c),
-        ScriptCommand c => ScriptSession.Run(c),
-        _ => UsageError("internal: unhandled command"),
-    };
+        // Config-file defaults land before dispatch, so a config error beats per-command usage
+        // validation; help/version/manual stay config-free (a broken config file must not take
+        // --help down).
+        switch (command)
+        {
+            case MonitorCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
+            case SendCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
+            case ScriptCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
+            case ListDevicesCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
+        }
+
+        return command switch
+        {
+            HelpCommand c => PrintHelp(c),
+            ManualCommand => PrintManual(),
+            VersionCommand => PrintVersion(),
+            UsageErrorCommand c => UsageError(c.Message),
+            ListDevicesCommand c => DeviceListing.Run(c),
+            MonitorCommand c => MonitorSession.Run(c.Options),
+            SendCommand c => SendOnce.Run(c),
+            ScriptCommand c => ScriptSession.Run(c),
+            _ => UsageError("internal: unhandled command"),
+        };
+    }
 
     private static int PrintManual()
     {

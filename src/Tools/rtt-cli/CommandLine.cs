@@ -36,6 +36,8 @@ internal sealed class CommandLineOptions
     public int? ScriptTimeoutMs { get; set; }
     /// <summary>Substring filter, list-devices only.</summary>
     public string? DeviceFilter { get; set; }
+    /// <summary>-c/--config: JSON file to load option defaults from; an explicit path must exist.</summary>
+    public string? ConfigPath { get; set; }
 
     /// <summary>Encoding for both directions unless --encoding narrowed it (utf8 default).</summary>
     public TextEncodingKind EffectiveEncoding => Encoding ?? TextEncodingKind.Utf8;
@@ -46,7 +48,7 @@ internal sealed class CommandLineOptions
     public RttConnectionConfig ToConnectionConfig(bool resetDefault)
     {
         if (Chip.Length == 0)
-            throw new UsageException("missing required option --chip <device> (see rtt-cli list-devices)");
+            throw new UsageException("missing required option --chip <device> (see rtt-cli list-devices, or set 'chip' in .rttsh.config.json)");
         int channel = Channel ?? 0;
         if (channel is < 0 or > RttConnectionConfig.MaxChannel)
             throw new UsageException($"--channel: expected 0-{RttConnectionConfig.MaxChannel}, got {Channel}");
@@ -67,7 +69,7 @@ internal sealed class CommandLineOptions
 
 internal abstract record RttCommand;
 internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
-internal sealed record ListDevicesCommand(string? Filter, string DllPath) : RttCommand;
+internal sealed record ListDevicesCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
 
@@ -151,7 +153,7 @@ internal static class CommandLine
             return new ScriptCommand(path, eval, options);
         }
         if (command == spec.ListDevices)
-            return new ListDevicesCommand(options.DeviceFilter, options.DllPath);
+            return new ListDevicesCommand(options);
         return new MonitorCommand(options);   // no subcommand = default monitor
     }
 
@@ -207,5 +209,6 @@ internal static class CommandLine
         WaitMs = p.GetValue(s.Wait),
         ScriptTimeoutMs = p.GetValue(s.ScriptTimeout),
         DeviceFilter = p.GetValue(s.Filter),
+        ConfigPath = p.GetValue(s.Config),
     };
 }

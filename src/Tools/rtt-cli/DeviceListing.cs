@@ -6,8 +6,9 @@ internal static class DeviceListing
 {
     public static int Run(ListDevicesCommand command)
     {
+        CommandLineOptions options = command.Options;
         using var library = new JLinkLibrary();
-        if (!library.Load(command.DllPath, out string error))
+        if (!library.Load(options.DllPath, out string error))
         {
             Console.Error.WriteLine($"rtt-cli: {error}");
             return 1;
@@ -18,7 +19,7 @@ internal static class DeviceListing
             return 1;
         }
 
-        if (command.Filter is { Length: > 0 } filter)
+        if (options.DeviceFilter is { Length: > 0 } filter)
         {
             records = records.Where(r => ContainsIgnoreCase(r.Name, filter)
                 || ContainsIgnoreCase(r.Manufacturer, filter)
