@@ -175,7 +175,7 @@ internal static class ConfigFile
         if (property.Value.ValueKind == JsonValueKind.String)
         {
             string word = property.Value.GetString()!;
-            if (words.TryGetValue(word, out T value))
+            if (words.TryGetValue(word, out T? value))   // T? = defaultable; only read when found
                 return value;
             throw new UsageException($"--config: '{property.Name}': expected {expected}, got '{word}'");
         }
