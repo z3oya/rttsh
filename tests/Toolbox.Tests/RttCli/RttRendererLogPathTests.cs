@@ -1,3 +1,4 @@
+using Toolbox.Core.SerialComm;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;
@@ -10,9 +11,9 @@ public class RttRendererLogPathTests
     [Fact]
     public void Bad_log_path_becomes_a_usage_error()
     {
-        var options = new CommandLineOptions { LogFile = "bad|name.log" };   // Windows 非法字符 '|' → .NET Core 实测抛 IOException
+        // Windows 非法字符 '|' → .NET Core 实测抛 IOException
         var ex = Assert.Throws<UsageException>(() =>
-            new RttRenderer(options, TextWriter.Null, new object()));
+            new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: "bad|name.log", TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);
     }
 
@@ -21,9 +22,8 @@ public class RttRendererLogPathTests
     [Fact]
     public void Log_path_that_is_a_directory_becomes_a_usage_error()
     {
-        var options = new CommandLineOptions { LogFile = Path.GetTempPath() };
         var ex = Assert.Throws<UsageException>(() =>
-            new RttRenderer(options, TextWriter.Null, new object()));
+            new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: Path.GetTempPath(), TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);
     }
 
@@ -31,9 +31,8 @@ public class RttRendererLogPathTests
     public void Missing_log_directory_becomes_a_usage_error()
     {
         string path = Path.Combine(Path.GetTempPath(), "no_such_dir_xyz", "f.log");   // 目录不存在 → DirectoryNotFoundException 臂
-        var options = new CommandLineOptions { LogFile = path };
         var ex = Assert.Throws<UsageException>(() =>
-            new RttRenderer(options, TextWriter.Null, new object()));
+            new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: path, TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);
     }
 
@@ -72,7 +71,7 @@ public class RttRendererLogPathTests
         string path = Path.Combine(Path.GetTempPath(), $"rtt-cli-test-{Guid.NewGuid():N}.log");
         try
         {
-            using (var renderer = new RttRenderer(new CommandLineOptions { LogFile = path }, TextWriter.Null, new object()))
+            using (var renderer = new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: path, TextWriter.Null, new object()))
             {
                 renderer.OnData("hello "u8.ToArray());
                 renderer.OnData("rtt"u8.ToArray());

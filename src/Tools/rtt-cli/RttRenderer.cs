@@ -21,14 +21,14 @@ internal sealed class RttRenderer : IDisposable
     private int _hexPending;
     private bool _disposed;
 
-    public RttRenderer(CommandLineOptions options, TextWriter data, object consoleLock, TerminalUi? ui = null)
+    public RttRenderer(TextEncodingKind encoding, bool hex, string? logPath, TextWriter data, object consoleLock, TerminalUi? ui = null)
     {
         _data = data;
         _consoleLock = consoleLock;
-        _decoder = TextCodec.Resolve(options.EffectiveEncoding).GetDecoder();
+        _decoder = TextCodec.Resolve(encoding).GetDecoder();
         _ui = ui;
-        _hex = options.Hex;
-        _logStream = RttLogFile.Open(options.LogFile);
+        _hex = hex;
+        _logStream = RttLogFile.Open(logPath);
     }
 
     /// <summary>Called on the transport's poll thread.</summary>

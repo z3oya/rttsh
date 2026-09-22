@@ -77,8 +77,6 @@ internal sealed record ManualCommand : RttCommand;
 internal sealed record VersionCommand : RttCommand;
 internal sealed record UsageErrorCommand(string Message) : RttCommand;
 
-internal sealed class UsageException(string message) : Exception(message);
-
 /// <summary>System.CommandLine parses; Parse maps the ParseResult onto the RttCommand union.
 /// Pure function of string[] (the test seam). Only this file and CliSpec.cs know the library;
 /// the first-token pre-checks below keep the old usage messages and the old

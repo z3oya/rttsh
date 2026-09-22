@@ -94,7 +94,7 @@ internal static class Program
 
         try
         {
-            using var renderer = new RttRenderer(options, Console.Out, ConsoleLock, ui);
+            using var renderer = new RttRenderer(options.EffectiveEncoding, options.Hex, options.LogFile, Console.Out, ConsoleLock, ui);
             WireEvents(transport, renderer, done, exitCode, ui, options.Verbose);
 
             try
@@ -211,7 +211,7 @@ internal static class Program
         }
 
         using var transport = new JLinkRttTransport();
-        using var renderer = new RttRenderer(options, Console.Out, ConsoleLock);
+        using var renderer = new RttRenderer(options.EffectiveEncoding, options.Hex, options.LogFile, Console.Out, ConsoleLock);
         using var done = new ManualResetEventSlim(false);
         var exitCode = new StrongBox<int>();
 

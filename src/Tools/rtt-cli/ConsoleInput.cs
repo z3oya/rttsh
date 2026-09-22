@@ -2,16 +2,6 @@ using System.Text;
 
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>The line editor's view of the terminal. TerminalUi implements it in TUI mode;
-/// tests substitute a recorder - the real console cannot be driven from unit tests.</summary>
-internal interface IInputSurface
-{
-    void WriteLog(string text);
-    bool TryAppendInputChar(char c);
-    void RedrawInput(string buffer);
-    void CommitInput(string line);
-}
-
 /// <summary>Minimal line editor, used while Console.TreatControlCAsInput is on: printable chars
 /// append, Backspace deletes, Enter commits, Ctrl+C returns false. Ctrl+C therefore arrives as
 /// an ordinary input character - independent of Console.CancelKeyPress dispatch, which never
