@@ -4,7 +4,7 @@ using Toolbox.Core.Rtt;
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>Shared J-Link connection sequence: probe select, DLL open, target connect, optional
-/// reset+resume. Extracted from JLinkRttTransport so the watch command runs the exact same path;
+/// reset+resume. Extracted from JLinkRttTransport so the connect sequence has one owner;
 /// RTT START is deliberately NOT part of this - only the transport starts RTT.
 /// Threading: the DLL is not thread-safe; the owner serializes all Library calls. The log/error
 /// thunks are instance fields to keep them alive for the DLL's lifetime.
@@ -84,6 +84,7 @@ internal sealed class JLinkConnection : IDisposable
             throw;
         }
 
+        LogDiagnostics();
         _open = true;
     }
 
@@ -106,6 +107,36 @@ internal sealed class JLinkConnection : IDisposable
 
     private void OnDllLog(string message) => OnLog(message, isError: false);
     private void OnDllError(string message) => OnLog(message, isError: true);
+
+    /// <summary>Diagnostics via LogLine: which DLL actually loaded and its M.mmrr version.
+    /// Runs unconditionally - the owning transport subscribes LogLine in its constructor, so
+    /// there is no "no subscriber" case to guard. Whether the line is shown is the subscriber's
+    /// call: Program only wires the transport's LogLine through under --verbose. Best-effort -
+    /// diagnostics never fail the connect.</summary>
+    private void LogDiagnostics()
+    {
+        try
+        {
+            string dllLine = Path.IsPathRooted(_lib.LoadedPath)
+                ? _lib.LoadedPath
+                : $"(bare-name load: {_lib.LoadedPath})";
+            if (_lib.GetDllVersion is { } getDllVersion)
+            {
+                int v = getDllVersion();
+                string rev = v % 100 == 0 ? "" : ((char)('a' + v % 100 - 1)).ToString();
+                dllLine += $" (v{v / 10000}.{(v / 100) % 100:00}{rev})";
+            }
+            else
+            {
+                dllLine += " (version unknown)";   // export missing = very old DLL, distinct from a probe failure
+            }
+            OnLog(dllLine, isError: false);
+        }
+        catch
+        {
+            // diagnostics never fail the connect
+        }
+    }
 
     private void OnLog(string message, bool isError)
     {

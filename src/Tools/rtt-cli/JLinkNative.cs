@@ -26,6 +26,7 @@ internal static class JLinkNative
     public const string RttWrite = "JLINK_RTTERMINAL_Write";
     public const string DeviceGetInfo = "JLINKARM_DEVICE_GetInfo";
     public const string Core2CoreName = "JLINKARM_Core2CoreName";
+    public const string GetDllVersion = "JLINKARM_GetDLLVersion";
 
     public const int TifJtag = 0;
     public const int TifSwd = 1;
@@ -102,4 +103,5 @@ internal static class JLinkNative
     public delegate int DeviceGetInfoCountFn(int index, IntPtr info);   // index=-1, info=null -> device count
     public delegate int DeviceGetInfoFn(int index, ref DeviceInfo info);
     public delegate int Core2CoreNameFn(int core, byte[] buffer, int bufferSize);
+    public delegate int GetDllVersionFn();   // Mmmrr: major=v/10000, minor=(v/100)%100, rev=v%100
 }
