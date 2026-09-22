@@ -14,12 +14,17 @@ internal static class LuaManual
           rtt.wait_hex(ms)           same receive window as hex text (byte-exact)
           rtt.expect(pattern, ms)    wait until the Lua pattern matches and return
                                      the text through the match end (consuming);
-                                     ms defaults to 1000; a timeout raises an error
+                                     ms defaults to 1000; a timeout raises an error;
+                                     Matches with full Lua 5.4 pattern syntax and
+                                     scans forward from the end of the last match -
+                                     consumed text is never re-matched.
           rtt.now()                  monotonic milliseconds since the script started
           rtt.sleep(ms)              pause the script
           rtt.exit(code)             stop the script and exit with code (default 0)
 
         Text in and out follows --encoding; rtt.send appends the --eol terminator.
+          With --eol none nothing is appended - embed \n yourself or
+          consecutive sends run together on one line.
 
         A failing rtt.* call raises a catchable Lua error (use pcall) carrying the
         reason; an uncaught error stops the script with exit code 1. Exit codes:
