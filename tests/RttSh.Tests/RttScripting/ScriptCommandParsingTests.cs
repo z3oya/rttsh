@@ -65,6 +65,6 @@ public class ScriptCommandParsingTests
         var first = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "--manual"]));
         var second = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "a.lua", "--manual"]));
         Assert.Contains("--manual was removed", first.Message);
-        Assert.Contains("rtt-cli manual", second.Message);
+        Assert.Contains("rttsh manual", second.Message);
     }
 }

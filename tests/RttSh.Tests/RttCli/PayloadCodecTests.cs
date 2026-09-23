@@ -1,4 +1,4 @@
-using Toolbox.Core.SerialComm;
+using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;

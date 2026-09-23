@@ -15,7 +15,7 @@ public class RttFailureContextTests
     [Fact]
     public void Unmapped_codes_admit_ignorance_and_hint_at_contention()
     {
-        string hint = JLinkRttTransport.RttFailureContext(-11);   // 真机观察到的未文档化码
+        string hint = JLinkRttTransport.RttFailureContext(-11);
         Assert.Contains("not in the verified table", hint);
         Assert.Contains("another debugger", hint);
     }

@@ -1,4 +1,4 @@
-using Toolbox.Core.Rtt.Elf;
+using RttSh.Core.Rtt.Elf;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;

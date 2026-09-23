@@ -1,4 +1,4 @@
-using Toolbox.Core.SerialComm;
+using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;
@@ -11,7 +11,6 @@ public class RttRendererLogPathTests
     [Fact]
     public void Bad_log_path_becomes_a_usage_error()
     {
-        // Windows 非法字符 '|' → .NET Core 实测抛 IOException
         var ex = Assert.Throws<UsageException>(() =>
             new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: "bad|name.log", TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);
@@ -30,7 +29,7 @@ public class RttRendererLogPathTests
     [Fact]
     public void Missing_log_directory_becomes_a_usage_error()
     {
-        string path = Path.Combine(Path.GetTempPath(), "no_such_dir_xyz", "f.log");   // 目录不存在 → DirectoryNotFoundException 臂
+        string path = Path.Combine(Path.GetTempPath(), "no_such_dir_xyz", "f.log");
         var ex = Assert.Throws<UsageException>(() =>
             new RttRenderer(TextEncodingKind.Utf8, hex: false, logPath: path, TextWriter.Null, new object()));
         Assert.Contains("--log", ex.Message);

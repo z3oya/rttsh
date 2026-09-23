@@ -1,5 +1,5 @@
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;

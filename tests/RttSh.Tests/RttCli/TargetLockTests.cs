@@ -1,5 +1,5 @@
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli;
 
 namespace Toolbox.Tests.RttCli;
@@ -29,7 +29,7 @@ public class TargetLockTests : IDisposable
 
         var error = new StringWriter();
         Assert.Null(TargetLock.TryAcquire(Config(channel: 1), error, _dir));
-        Assert.Contains($"already held by another rtt-cli (PID {Environment.ProcessId})", error.ToString());
+        Assert.Contains($"already held by another rttsh (PID {Environment.ProcessId})", error.ToString());
         Assert.Contains("channel 1", error.ToString());   // the warning names the channel from the config
     }
 
