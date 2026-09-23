@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Toolbox.Tools.RttCli</RootNamespace>
     <!-- The tool's own release version, shown by the version flag. -->
-    <Version>0.2.9</Version>
+    <Version>0.3.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
