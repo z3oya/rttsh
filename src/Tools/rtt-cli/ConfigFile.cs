@@ -22,6 +22,7 @@ internal sealed class ConfigValues
     public string? LogFile { get; set; }
     public int? WaitMs { get; set; }
     public int? ScriptTimeoutMs { get; set; }
+    public string? Elf { get; set; }
 }
 
 /// <summary>JSON config file support (-c/--config, default .rttsh.config.json). Independent of
@@ -89,6 +90,7 @@ internal static class ConfigFile
         options.LogFile ??= values.LogFile;
         options.WaitMs ??= values.WaitMs;
         options.ScriptTimeoutMs ??= values.ScriptTimeoutMs;
+        if (string.IsNullOrEmpty(options.ElfPath) && values.Elf is not null) options.ElfPath = values.Elf;
     }
 
     /// <summary>Layer 1: strict schema - unknown and excluded keys are errors, so a typo'd key
@@ -134,6 +136,7 @@ internal static class ConfigFile
                     case "log": values.LogFile = Text(property); break;
                     case "wait": values.WaitMs = Integer(property); break;
                     case "scriptTimeout": values.ScriptTimeoutMs = Integer(property); break;
+                    case "elf": values.Elf = Text(property); break;
                     default:
                         throw new UsageException($"--config: unknown key '{key}' ({sourceName})");
                 }

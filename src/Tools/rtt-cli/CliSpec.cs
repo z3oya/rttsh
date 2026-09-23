@@ -42,6 +42,7 @@ internal sealed class Spec
     public required Option<int?> ScriptTimeout { get; init; }
     public required Option<string?> Filter { get; init; }
     public required Option<string?> Config { get; init; }
+    public required Option<string?> Elf { get; init; }
     public required Option<string?> Eval { get; init; }
     public required Command Manual { get; init; }
 }
@@ -99,11 +100,14 @@ internal static class CliSpec
         Option<string?> config = TextOption("--config", "path", "config file",
             "load option defaults from this JSON file (default: ./.rttsh.config.json when present)");
         config.Aliases.Add("-c");
+        Option<string?> elf = TextOption("--elf", "path", "file",
+            "monitor/send/script: resolve the RTT control block from a firmware image's " +
+            "_SEGGER_RTT symbol (ELF32; an explicit --rtt-addr/--rttAddr wins)");
 
         var root = new RootCommand("rtt-cli - SEGGER J-Link RTT terminal");
         foreach (Option option in new Option[]
                  { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
-                   encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config })
+                   encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, elf })
             root.Options.Add(option);
 
         Command listDevices = new("list-devices", "list the J-Link DLL device database");
@@ -188,6 +192,7 @@ internal static class CliSpec
             ScriptTimeout = scriptTimeout,
             Filter = filter,
             Config = config,
+            Elf = elf,
             Eval = eval,
             Manual = manual,
         };

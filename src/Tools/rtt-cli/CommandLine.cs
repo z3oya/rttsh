@@ -38,6 +38,9 @@ internal sealed class CommandLineOptions
     public string? DeviceFilter { get; set; }
     /// <summary>-c/--config: JSON file to load option defaults from; an explicit path must exist.</summary>
     public string? ConfigPath { get; set; }
+    /// <summary>--elf: firmware image (ELF32) to resolve the RTT control-block address from.
+    /// Resolved before dispatch (ElfResolver); an explicit RttAddress always wins.</summary>
+    public string? ElfPath { get; set; }
 
     /// <summary>Encoding for both directions unless --encoding narrowed it (utf8 default).</summary>
     public TextEncodingKind EffectiveEncoding => Encoding ?? TextEncodingKind.Utf8;
@@ -211,5 +214,6 @@ internal static class CommandLine
         ScriptTimeoutMs = p.GetValue(s.ScriptTimeout),
         DeviceFilter = p.GetValue(s.Filter),
         ConfigPath = p.GetValue(s.Config),
+        ElfPath = p.GetValue(s.Elf),
     };
 }

@@ -36,12 +36,23 @@ internal static class Program
     {
         // Config-file defaults land before dispatch, so a config error beats per-command usage
         // validation; help/version/manual stay config-free (a broken config file must not take
-        // --help down).
+        // --help down). --elf resolves right after the config merge (it must see the merged
+        // rttAddr/rttRange to honor precedence) and only for the connection commands -
+        // list-devices never opens a link.
         switch (command)
         {
-            case MonitorCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
-            case SendCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
-            case ScriptCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
+            case MonitorCommand c:
+                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                ElfResolver.Apply(c.Options);
+                break;
+            case SendCommand c:
+                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                ElfResolver.Apply(c.Options);
+                break;
+            case ScriptCommand c:
+                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                ElfResolver.Apply(c.Options);
+                break;
             case ListDevicesCommand c: ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath); break;
         }
 

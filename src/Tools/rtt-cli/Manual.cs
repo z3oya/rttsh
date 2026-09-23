@@ -36,7 +36,7 @@ internal static class Manual
             "scriptTimeout": 20000
           }
 
-        All keys are optional; the table below lists all thirteen. They
+        All keys are optional; the table below lists all fourteen. They
         mirror the CLI options in camelCase - "interface" is what --help
         spells --if:
 
@@ -45,6 +45,8 @@ internal static class Manual
           interface      "swd" | "jtag"
           rttAddr        control-block address, hex string "0x..."
           rttRange       scan range in bytes, hex string "0x..."
+          elf            firmware image (ELF32) for control-block lookup
+                         via --elf; explicit rttAddr wins; "" = unset
           sn             probe USB serial number
           channel        RTT up/down channel pair, 0-15 (default 0)
           dll            JLink DLL path (default: auto-detect; "" = unset)
@@ -67,7 +69,45 @@ internal static class Manual
         --help, --version and this manual never touch it, so a broken config
         cannot take the reference down.
 
-        2. SCRIPTING: THE rtt.* API
+        2. --ELF: CONTROL-BLOCK LOOKUP FROM A FIRMWARE IMAGE
+
+        --elf <image> resolves the RTT control-block address from the
+        image's _SEGGER_RTT symbol (ELF32), so the address follows every
+        rebuild instead of a hand-copied .map value:
+
+          rtt-cli send "version" --chip STM32H743XI --elf app.axf --wait 500
+          rtt-cli: --elf: _SEGGER_RTT at 0x24000070 (from 'app.axf')
+
+        The stderr line confirms the pin; stdout stays pipeable. All three
+        connection commands take it, and so does the config file, where it
+        becomes the default for every session:
+
+          rtt-cli script smoke.lua --chip STM32H743XI --elf build/app.axf
+
+          { "chip": "STM32H743XI", "elf": "build/app.axf" }
+
+        Rules worth remembering:
+
+          - an explicit --rtt-addr/--rttAddr wins, and --elf is not even
+            read - a temporary debug address must not be blocked by a
+            stale image:
+              rtt-cli send ping --elf app.axf --rtt-addr 0x20000000
+              rtt-cli: --elf ignored: --rtt-addr/--rttAddr already pins
+              the control block (0x20000000)
+          - the failure --elf removes: a wrong hand-pinned address opens
+            RTT in the wrong place and writes starve -
+            "down-buffer made no progress ... (wrote 0/5 bytes)". A
+            resolved address is used as-is; any --rtt-range is ignored
+            with a warning, since a window scan could lock onto a
+            different "SEGGER RTT" hit
+          - an image without the symbol (built without RTT, or stripped)
+            only warns and falls back to the SDK RAM scan:
+              --elf: _SEGGER_RTT not in 'app.elf' (built without RTT,
+              or stripped); falling back to the SDK RAM scan
+          - file-level problems are usage errors (exit 2): a missing
+            path, a file that is not an ELF image, an ELF64 image
+
+        3. SCRIPTING: THE rtt.* API
 
           rtt.send(text)             send text; appends the --eol terminator
           rtt.send_hex("DE AD")      send raw bytes parsed from hex text (byte-exact)
@@ -89,7 +129,7 @@ internal static class Manual
         terminator. With --eol none nothing is appended - embed \n yourself
         or consecutive sends run together on one line.
 
-        3. WRITING SCRIPTS
+        4. WRITING SCRIPTS
 
         The workhorse is a send/expect pair - send a command, then expect a
         stable substring of the reply. A timeout raises and stops the script
@@ -140,7 +180,7 @@ internal static class Manual
 
           rtt-cli script --eval 'rtt.send("ping"); rtt.expect("pong", 500)'
 
-        4. MECHANICS
+        5. MECHANICS
 
           - any rtt.* failure is a catchable Lua error carrying the reason
             (pcall); an uncaught error stops the script with exit code 1
