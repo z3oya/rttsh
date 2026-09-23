@@ -18,6 +18,7 @@ public class ConfigFileTests
               "interface": "swd",
               "rttAddr": "0x20000000",
               "rttRange": "0x1000",
+              "elf": "build/app.elf",
               "sn": 12345,
               "channel": 2,
               "dll": "C:/segger/JLink_x64.dll",
@@ -33,6 +34,7 @@ public class ConfigFileTests
         Assert.Equal(RttInterface.Swd, v.Interface);
         Assert.Equal(0x20000000u, v.RttAddress);
         Assert.Equal(0x1000u, v.RttRange);
+        Assert.Equal("build/app.elf", v.Elf);
         Assert.Equal(12345, v.SerialNo);
         Assert.Equal(2, v.Channel);
         Assert.Equal("C:/segger/JLink_x64.dll", v.DllPath);
@@ -60,14 +62,23 @@ public class ConfigFileTests
         Assert.Null(v.LogFile);
         Assert.Null(v.WaitMs);
         Assert.Null(v.ScriptTimeoutMs);
+        Assert.Null(v.Elf);
     }
 
     [Fact]
     public void Null_values_count_as_unset()
     {
-        ConfigValues v = ConfigFile.Parse("""{ "chip": null, "channel": null }""", "t.json");
+        ConfigValues v = ConfigFile.Parse("""{ "chip": null, "channel": null, "elf": null }""", "t.json");
         Assert.Null(v.Chip);
         Assert.Null(v.Channel);
+        Assert.Null(v.Elf);
+    }
+
+    [Fact]
+    public void Elf_key_rejects_non_string_values()
+    {
+        var ex = Assert.Throws<UsageException>(() => ConfigFile.Parse("""{ "elf": 5 }""", "t.json"));
+        Assert.Contains("'elf': expected a string", ex.Message);
     }
 
     // ---- Parse: enum words (tables match the CLI exactly) ----

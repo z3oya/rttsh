@@ -61,11 +61,29 @@ public class ManualTests
     {
         string[] keys =
         [
-            "chip", "speed", "interface", "rttAddr", "rttRange", "sn", "channel",
+            "chip", "speed", "interface", "rttAddr", "rttRange", "elf", "sn", "channel",
             "dll", "encoding", "eol", "log", "wait", "scriptTimeout",
         ];
         foreach (string key in keys)
             Assert.Contains(key, Manual.Text);
+    }
+
+    [Fact]
+    public void Manual_documents_the_elf_lookup_policy()
+    {
+        Assert.Contains("fourteen", Manual.Text);
+        Assert.Contains("--elf", Manual.Text);
+        Assert.Contains("explicit rttAddr wins", Manual.Text);
+    }
+
+    [Fact]
+    public void Manual_shows_elf_usage_examples()
+    {
+        Assert.Contains("--elf app.axf", Manual.Text);
+        Assert.Contains("_SEGGER_RTT at 0x24000070 (from 'app.axf')", Manual.Text);
+        Assert.Contains("--elf ignored", Manual.Text);
+        Assert.Contains("down-buffer made no progress", Manual.Text);
+        Assert.Contains("falling back to the SDK RAM scan", Manual.Text);
     }
 
     [Fact]
