@@ -1,0 +1,5 @@
+rtt.send("async1 abc")
+rtt.expect("bad ms", 500)
+rtt.send("async1 quiet")
+rtt.expect("bad ms", 500)
+rtt.log("t04 PASS")

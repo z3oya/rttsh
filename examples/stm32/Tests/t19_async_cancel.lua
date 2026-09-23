@@ -1,0 +1,16 @@
+rtt.send("async1 5000")
+local r = rtt.expect("async1 #%d+ accepted", 500)
+local id = r:match("#(%d+)")
+rtt.send("async1 cancel")
+rtt.expect("async1 #"..id.." cancelled", 500)
+rtt.send("async1 100")   -- slot must be free right away
+local r2 = rtt.expect("async1 #%d+ accepted, due in 100 ms", 500)
+local id2 = r2:match("#(%d+)")
+assert(tonumber(id2) == tonumber(id) + 1,
+  "FAIL: id not consecutive after cancel: "..id.." -> "..id2)
+rtt.expect("async1 #"..id2.." done", 2000)
+rtt.send("async1 cancel")
+rtt.expect("async1 cancel: nothing pending", 500)
+rtt.send("async2 cancel")
+rtt.expect("async2 cancel: nothing pending", 500)
+rtt.log("t19 PASS (ids "..id.."->"..id2..")")

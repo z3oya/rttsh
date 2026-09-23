@@ -1,0 +1,7 @@
+rtt.send("async2 100 quiet")
+rtt.expect("async2 #%d+ done", 2500)
+rtt.send("async2 500 quite")
+rtt.expect("usage: async2", 500)
+rtt.send("async2 quiet 500")
+rtt.expect("usage: async2", 500)
+rtt.log("t08 PASS")

@@ -1,0 +1,6 @@
+rtt.send("async1 800")
+rtt.expect("async1 #%d+ accepted, due in 800 ms", 500)
+rtt.send("async2 800")
+rtt.expect("async1 #%d+ done", 2000)
+rtt.expect("async2 #%d+ done", 1500)
+rtt.log("t09 PASS")

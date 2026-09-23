@@ -1,0 +1,17 @@
+-- pending lines jitter (ms left), so match the 'pending' word, not the number
+rtt.send("async")
+rtt.expect("async1: idle", 500)
+rtt.expect("async2: idle", 500)
+rtt.send("async2 1500")
+rtt.send("async1 1000")   -- both pended before any expect: queried independently
+local r = rtt.expect("async1 #%d+ accepted", 500)
+local id = r:match("#(%d+)")
+rtt.send("async")
+rtt.expect("async1: #"..id.." pending", 500)
+rtt.expect("async2: #%d+ pending", 500)
+rtt.expect("async1 #"..id.." done", 2500)
+rtt.expect("async2 #%d+ done", 2000)
+rtt.send("async")
+rtt.expect("async1: idle", 500)
+rtt.expect("async2: idle", 500)
+rtt.log("t20 PASS (async1 id="..id..")")

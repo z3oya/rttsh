@@ -1,0 +1,5 @@
+rtt.send("block")
+rtt.expect("not found", 500)
+rtt.send("block 500")
+rtt.expect("not found", 500)
+rtt.log("t10 PASS")
