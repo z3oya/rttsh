@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -44,7 +44,7 @@ internal static class MonitorSession
             }
             catch (IOException ex)
             {
-                Console.Error.WriteLine($"rtt-cli: cannot read redirected input: {ex.Message}");
+                Console.Error.WriteLine($"rttsh: cannot read redirected input: {ex.Message}");
                 return 1;
             }
         }
@@ -75,7 +75,7 @@ internal static class MonitorSession
                 }
                 catch (IOException ex)
                 {
-                    SessionSupport.WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
+                    SessionSupport.WriteSessionLine(ui, $"rttsh: {ex.Message}");
                     exitCode.Value = 1;
                     throw;
                 }

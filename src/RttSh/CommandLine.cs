@@ -1,7 +1,7 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -51,7 +51,7 @@ internal sealed class CommandLineOptions
     public RttConnectionConfig ToConnectionConfig(bool resetDefault)
     {
         if (Chip.Length == 0)
-            throw new UsageException("missing required option --chip <device> (see rtt-cli list-devices, or set 'chip' in .rttsh.config.json)");
+            throw new UsageException("missing required option --chip <device> (see rttsh list-devices, or set 'chip' in .rttsh.config.json)");
         int channel = Channel ?? 0;
         if (channel is < 0 or > RttConnectionConfig.MaxChannel)
             throw new UsageException($"--channel: expected 0-{RttConnectionConfig.MaxChannel}, got {Channel}");
@@ -109,7 +109,7 @@ internal static class CommandLine
         if (args.Length > 0 && args[0] == "script")
         {
             if (Array.IndexOf(args, "--manual") >= 0)   // retired flag: point at its replacement
-                return new UsageErrorCommand("script: --manual was removed; run 'rtt-cli manual'");
+                return new UsageErrorCommand("script: --manual was removed; run 'rttsh manual'");
             if (args.Length >= 2 && args[1] == "--eval")
             {
                 if (args.Length < 3)
@@ -135,7 +135,7 @@ internal static class CommandLine
             return new VersionCommand();
 
         // every remaining parse problem -> UsageException; Program.Main prints the
-        // "rtt-cli: " prefix + hint and exits 2, unchanged
+        // "rttsh: " prefix + hint and exits 2, unchanged
         if (parsed.Errors.Count > 0)
             throw new UsageException(Describe(parsed, args));
 
@@ -179,7 +179,7 @@ internal static class CommandLine
     }
 
     /// <summary>Old wording for the two most common failures; anything else keeps the
-    /// library message (exit code 2 + "rtt-cli: " prefix hold regardless).</summary>
+    /// library message (exit code 2 + "rttsh: " prefix hold regardless).</summary>
     private static string Describe(ParseResult parsed, string[] args)
     {
         if (parsed.UnmatchedTokens.Count > 0)

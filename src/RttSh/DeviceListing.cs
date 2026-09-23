@@ -10,12 +10,12 @@ internal static class DeviceListing
         using var library = new JLinkLibrary();
         if (!library.Load(options.DllPath, out string error))
         {
-            Console.Error.WriteLine($"rtt-cli: {error}");
+            Console.Error.WriteLine($"rttsh: {error}");
             return 1;
         }
         if (!JLinkDeviceDatabase.TryEnumerate(library, out List<JLinkDeviceRecord> records, out error))
         {
-            Console.Error.WriteLine($"rtt-cli: {error}");
+            Console.Error.WriteLine($"rttsh: {error}");
             return 1;
         }
 

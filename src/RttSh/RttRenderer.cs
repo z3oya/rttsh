@@ -1,5 +1,5 @@
 using System.Text;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.SerialComm;
 
 namespace Toolbox.Tools.RttCli;
 

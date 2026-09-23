@@ -1,19 +1,19 @@
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>Plain-text reference printed by `rtt-cli manual`: the config file,
+/// <summary>Plain-text reference printed by `rttsh manual`: the config file,
 /// the rtt.* scripting API, and how to write scripts with them.</summary>
 internal static class Manual
 {
     public const string Text = """
-        rtt-cli manual
+        rttsh manual
 
-        The full option list with defaults is in rtt-cli --help; subcommands keep
-        their own page (rtt-cli send --help, rtt-cli script --help, ...).
+        The full option list with defaults is in rttsh --help; subcommands keep
+        their own page (rttsh send --help, rttsh script --help, ...).
 
         1. CONFIGURATION FILE (--config / -c)
 
-        rtt-cli takes option defaults from a JSON file. Name one with --config
-        <path>, or let rtt-cli pick up ./.rttsh.config.json from the working
+        rttsh takes option defaults from a JSON file. Name one with --config
+        <path>, or let rttsh pick up ./.rttsh.config.json from the working
         directory when present. An explicit path must exist (a missing file
         exits 2); the implicit default is optional.
 
@@ -75,14 +75,14 @@ internal static class Manual
         image's _SEGGER_RTT symbol (ELF32), so the address follows every
         rebuild instead of a hand-copied .map value:
 
-          rtt-cli send "version" --chip STM32H743XI --elf app.axf --wait 500
-          rtt-cli: --elf: _SEGGER_RTT at 0x24000070 (from 'app.axf')
+          rttsh send "version" --chip STM32H743XI --elf app.axf --wait 500
+          rttsh: --elf: _SEGGER_RTT at 0x24000070 (from 'app.axf')
 
         The stderr line confirms the pin; stdout stays pipeable. All three
         connection commands take it, and so does the config file, where it
         becomes the default for every session:
 
-          rtt-cli script smoke.lua --chip STM32H743XI --elf build/app.axf
+          rttsh script smoke.lua --chip STM32H743XI --elf build/app.axf
 
           { "chip": "STM32H743XI", "elf": "build/app.axf" }
 
@@ -91,8 +91,8 @@ internal static class Manual
           - an explicit --rtt-addr/--rttAddr wins, and --elf is not even
             read - a temporary debug address must not be blocked by a
             stale image:
-              rtt-cli send ping --elf app.axf --rtt-addr 0x20000000
-              rtt-cli: --elf ignored: --rtt-addr/--rttAddr already pins
+              rttsh send ping --elf app.axf --rtt-addr 0x20000000
+              rttsh: --elf ignored: --rtt-addr/--rttAddr already pins
               the control block (0x20000000)
           - the failure --elf removes: a wrong hand-pinned address opens
             RTT in the wrong place and writes starve -
@@ -171,14 +171,14 @@ internal static class Manual
 
         A complete smoke script:
 
-          -- smoke.lua    run: rtt-cli script smoke.lua --chip STM32H743XI
+          -- smoke.lua    run: rttsh script smoke.lua --chip STM32H743XI
           rtt.send("led r toggle")
           rtt.expect("LED r = ON", 500)
           rtt.log("smoke PASS")
 
         or inline, without a file:
 
-          rtt-cli script --eval 'rtt.send("ping"); rtt.expect("pong", 500)'
+          rttsh script --eval 'rtt.send("ping"); rtt.expect("pong", 500)'
 
         5. MECHANICS
 

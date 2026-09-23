@@ -1,9 +1,9 @@
 using System.Text;
-using Toolbox.Core.Rtt;
+using RttSh.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>One rtt-cli instance per target+channel. The lock is an OS file handle, not the
+/// <summary>One rttsh instance per target+channel. The lock is an OS file handle, not the
 /// file's existence: the kernel closes the handle whatever way the process dies (crash,
 /// taskkill, power loss), so a leftover .lock file can never block the next instance - the
 /// file on disk is only the holder's PID note.</summary>
@@ -11,7 +11,7 @@ internal sealed class TargetLock : IDisposable
 {
     /// <summary>Locks live per user (LOCALAPPDATA), named after target+channel only.</summary>
     private static string DefaultDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "rtt-cli", "locks");
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "rttsh", "locks");
 
     private const int SharingViolation = unchecked((int)0x80070020);
 
@@ -38,13 +38,13 @@ internal sealed class TargetLock : IDisposable
         catch (IOException ex) when (ex.HResult == SharingViolation)
         {
             error.WriteLine(
-                $"rtt-cli: {config.Chip} channel {config.Channel} ({Describe(config)}) is already held by another " +
-                $"rtt-cli ({ReadHolderPid(path)}). Close that instance first, or pick a different probe (--sn).");
+                $"rttsh: {config.Chip} channel {config.Channel} ({Describe(config)}) is already held by another " +
+                $"rttsh ({ReadHolderPid(path)}). Close that instance first, or pick a different probe (--sn).");
             return null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            error.WriteLine($"rtt-cli: cannot create the instance lock file: {ex.Message}");
+            error.WriteLine($"rttsh: cannot create the instance lock file: {ex.Message}");
             return null;
         }
 

@@ -3,8 +3,8 @@ using System.CommandLine.Help;
 using System.CommandLine.Invocation;
 using System.CommandLine.Parsing;
 using System.Globalization;
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -104,7 +104,7 @@ internal static class CliSpec
             "monitor/send/script: resolve the RTT control block from a firmware image's " +
             "_SEGGER_RTT symbol (ELF32; an explicit --rtt-addr/--rttAddr wins)");
 
-        var root = new RootCommand("rtt-cli - SEGGER J-Link RTT terminal");
+        var root = new RootCommand("rttsh - SEGGER J-Link RTT terminal");
         foreach (Option option in new Option[]
                  { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
                    encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, elf })
@@ -120,7 +120,7 @@ internal static class CliSpec
         send.Arguments.Add(payload);
 
         Command script = new("script",
-            "run a Lua automation script (rtt.* API; 'rtt-cli manual' prints the reference)");
+            "run a Lua automation script (rtt.* API; 'rttsh manual' prints the reference)");
         Argument<string?> scriptFile = new("file.lua")
         {
             Arity = ArgumentArity.ZeroOrOne,
@@ -159,7 +159,7 @@ internal static class CliSpec
         HelpOption help = root.Options.OfType<HelpOption>().First();
         VersionOption version = root.Options.OfType<VersionOption>().First();
         version.Aliases.Add("-v");   // the built-in --version has no short form; legacy -v kept
-        version.Description = "show rtt-cli's own version";
+        version.Description = "show rttsh's own version";
         help.Action = new ExitCodesHelpAction((HelpAction)help.Action!);
 
         return new Spec

@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using Toolbox.Core.Rtt;
+using RttSh.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -50,7 +50,7 @@ internal static class SessionSupport
         // next keystroke's redraw would erase it.
         transport.Error += ex =>
         {
-            WriteSessionLine(ui, $"rtt-cli: {ex.Message}");
+            WriteSessionLine(ui, $"rttsh: {ex.Message}");
             exitCode.Value = 1;
             done.Set();
         };
@@ -61,7 +61,7 @@ internal static class SessionSupport
         };
     }
 
-    /// <summary>Opens the transport; a connect failure prints "rtt-cli: &lt;message&gt;" to stderr
+    /// <summary>Opens the transport; a connect failure prints "rttsh: &lt;message&gt;" to stderr
     /// and returns false (the caller exits 1). Covers transport.Open only - each session wraps
     /// its own Write failures.</summary>
     public static bool OpenOrReport(JLinkRttTransport transport, RttConnectionConfig config)
@@ -73,7 +73,7 @@ internal static class SessionSupport
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)
         {
-            Console.Error.WriteLine($"rtt-cli: {ex.Message}");
+            Console.Error.WriteLine($"rttsh: {ex.Message}");
             return false;
         }
     }

@@ -1,5 +1,5 @@
 using System.Runtime.CompilerServices;
-using Toolbox.Core.Rtt;
+using RttSh.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -32,7 +32,7 @@ internal static class SendOnce
         }
         catch (Exception ex) when (ex is IOException or InvalidOperationException)
         {
-            Console.Error.WriteLine($"rtt-cli: {ex.Message}");
+            Console.Error.WriteLine($"rttsh: {ex.Message}");
             return 1;
         }
 

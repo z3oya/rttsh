@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 
 namespace Toolbox.Tools.RttCli;
 

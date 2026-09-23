@@ -26,8 +26,8 @@ internal static class Program
         }
         catch (UsageException ex)
         {
-            Console.Error.WriteLine($"rtt-cli: {ex.Message}");
-            Console.Error.WriteLine("Run 'rtt-cli --help' for usage.");
+            Console.Error.WriteLine($"rttsh: {ex.Message}");
+            Console.Error.WriteLine("Run 'rttsh --help' for usage.");
             return 2;
         }
     }
@@ -79,7 +79,7 @@ internal static class Program
     private static int PrintVersion()
     {
         string version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "?";
-        Console.WriteLine($"rtt-cli {version}");
+        Console.WriteLine($"rttsh {version}");
         return 0;
     }
 
@@ -93,8 +93,8 @@ internal static class Program
 
     private static int UsageError(string message)
     {
-        Console.Error.WriteLine($"rtt-cli: {message}");
-        Console.Error.WriteLine("Run 'rtt-cli --help' for usage.");
+        Console.Error.WriteLine($"rttsh: {message}");
+        Console.Error.WriteLine("Run 'rttsh --help' for usage.");
         return 2;
     }
 }

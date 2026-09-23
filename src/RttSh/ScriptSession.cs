@@ -1,7 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
-using Toolbox.Core.Rtt;
-using Toolbox.Core.SerialComm;
+using RttSh.Core.Rtt;
+using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli.Scripting;
 
 namespace Toolbox.Tools.RttCli;
@@ -62,13 +62,13 @@ internal static class ScriptSession
             }
             catch (ScriptError ex)
             {
-                SessionSupport.WriteDiag($"rtt-cli: {ex.Message}");
+                SessionSupport.WriteDiag($"rttsh: {ex.Message}");
                 exitCode.Value = 1;
             }
             catch (Exception ex)
             {
                 // binding-internal or unexpected failure must not crash the process uncleanly
-                SessionSupport.WriteDiag($"rtt-cli: script crashed: {ex.Message}");
+                SessionSupport.WriteDiag($"rttsh: script crashed: {ex.Message}");
                 exitCode.Value = 1;
             }
             finally

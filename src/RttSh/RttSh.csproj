@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <AssemblyName>rttsh</AssemblyName>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -11,11 +12,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Toolbox.Core\Toolbox.Core.csproj" />
+    <ProjectReference Include="..\RttSh.Core\RttSh.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="Toolbox.Tests" />
+    <InternalsVisibleTo Include="rttsh.tests" />
   </ItemGroup>
 
   <ItemGroup>

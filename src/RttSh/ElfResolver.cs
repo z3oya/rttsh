@@ -1,5 +1,5 @@
-using Toolbox.Core.Rtt;
-using Toolbox.Core.Rtt.Elf;
+using RttSh.Core.Rtt;
+using RttSh.Core.Rtt.Elf;
 
 namespace Toolbox.Tools.RttCli;
 
@@ -36,7 +36,7 @@ internal static class ElfResolver
         ElfDecision decision = Decide(options.RttAddress, options.RttRange is not null, options.ElfPath,
             () => LoadOrUsage(options.ElfPath));
 
-        SessionSupport.WriteDiag($"rtt-cli: {decision.Message}");
+        SessionSupport.WriteDiag($"rttsh: {decision.Message}");
         if (decision.Override)
         {
             options.RttAddress = decision.Address;

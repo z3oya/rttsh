@@ -1,4 +1,4 @@
-using Toolbox.Core.Rtt;
+using RttSh.Core.Rtt;
 
 namespace Toolbox.Tools.RttCli;
 
