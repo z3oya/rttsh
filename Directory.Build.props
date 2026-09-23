@@ -1,0 +1,5 @@
+<Project>
+  <PropertyGroup>
+    <CETCompat>false</CETCompat>
+  </PropertyGroup>
+</Project>
