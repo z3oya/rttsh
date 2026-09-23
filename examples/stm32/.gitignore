@@ -1,0 +1,38 @@
+# Build outputs
+*.o
+*.d
+*.i
+*.dep
+*.ftl
+*.axf
+*.htm
+*.bin
+*.hex
+*.map
+*.lst
+*.lnp
+*.sct
+*.crf
+*.browse
+
+# Keil MDK-ARM (main project)
+MDK-ARM/DebugConfig/
+MDK-ARM/RTE/
+MDK-ARM/stm32-project/
+MDK-ARM/out/
+MDK-ARM/JLinkLog.txt
+MDK-ARM/JLinkSettings.ini
+MDK-ARM/*.uvguix.*
+MDK-ARM/*.uvoptx
+MDK-ARM/*.scvd
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

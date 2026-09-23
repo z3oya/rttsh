@@ -1,0 +1,4 @@
+{
+  "chip": "STM32H743XI",
+  "scriptTimeout": 20000
+}
