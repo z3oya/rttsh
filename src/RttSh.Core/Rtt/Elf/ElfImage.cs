@@ -125,6 +125,13 @@ public sealed class ElfImage
     /// content is reported through Status.</summary>
     public static ElfImage FromFile(string path) => Load(File.ReadAllBytes(path));
 
+    /// <summary>Rebuilds an Ok image from parts a previous Load materialized and ElfImageCache
+    /// persisted. Callers vouch that the bytes and the metadata belong together - the cache
+    /// proves that with its stored content hash before handing them over.</summary>
+    public static ElfImage FromMaterialized(byte[] imageBytes, IReadOnlyList<ElfSymbol> symbols,
+        IReadOnlyList<ElfSection> sections, bool isLittleEndian)
+        => new(imageBytes, symbols, sections, isLittleEndian);
+
     public ElfLoadStatus Status { get; }
     public string FailureReason { get; }
     public bool IsLittleEndian { get; }
