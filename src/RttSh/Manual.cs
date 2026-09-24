@@ -13,13 +13,20 @@ internal static class Manual
         1. CONFIGURATION FILE (--config / -c)
 
         rttsh takes option defaults from a JSON file. Name one with --config
-        <path>, or let rttsh pick up ./.rttsh.config.json from the working
+        <path>, or let rttsh pick up ./.rttsh/config.json from the working
         directory when present. An explicit path must exist (a missing file
         exits 2); the implicit default is optional.
 
         Precedence, per option: command line > config file > built-in default.
         A JSON null counts as unset (the command line or the default wins);
         when a key repeats, the last occurrence wins.
+
+        -C/--root <dir> runs rttsh as if it had been started in <dir>: the
+        implicit ./.rttsh/config.json is looked up there, the --elf parse
+        cache lands in <dir>/.rttsh/elf-cache/, and every relative path
+        (elf, log, script, dll, an explicit --config) resolves against
+        <dir>. The directory must exist; a missing config inside it is not
+        an error. An explicit -c file beats the root's default file.
 
           {
             "chip": "STM32H743XI",
@@ -106,6 +113,11 @@ internal static class Manual
               or stripped); falling back to the SDK RAM scan
           - file-level problems are usage errors (exit 2): a missing
             path, a file that is not an ELF image, an ELF64 image
+          - parses are cached under ./.rttsh/elf-cache/, next to the
+            config file (./.rttsh/config.json), and reused while the
+            image's size and modification time are unchanged; a content
+            hash inside each entry still guards against a same-stamp
+            swap. Deleting elf-cache is always safe
 
         3. SCRIPTING: THE rtt.* API
 

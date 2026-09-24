@@ -46,7 +46,7 @@ public class ManualTests
     {
         Assert.Contains("--config", Manual.Text);
         Assert.Contains("--config / -c", Manual.Text);   // the real alias mention, not a substring accident
-        Assert.Contains(".rttsh.config.json", Manual.Text);
+        Assert.Contains(".rttsh/config.json", Manual.Text);
     }
 
     [Fact]

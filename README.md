@@ -19,7 +19,7 @@ t01 PASS (id=43)
 - **交互监控（monitor）**：不带子命令直接运行即进入实时终端；`-tui` 为对话式布局（上方日志、底部固定输入行，↑/↓ 翻阅历史命令）；输出重定向时转为接收 N 毫秒后退出（默认 500 ms），可接管道过滤。
 - **单发探测（send）**：发送一行命令并接收应答（`--wait`）；支持十六进制原始字节（`--hex`）与 `\n \r \t \\` 转义。
 - **控制块地址解析（`--elf`）**：从固件镜像的 `_SEGGER_RTT` 符号（ELF32）解析 RTT 控制块地址，地址随每次重编译自动更新，无需从 .map 文件手工复制。
-- **JSON 配置文件**：`.rttsh.config.json` 按工作目录自动加载，保存芯片名、超时等默认值；优先级为命令行 > 配置文件 > 内置默认值。
+- **JSON 配置文件**：`.rttsh/config.json` 按工作目录自动加载（与 `--elf` 解析缓存同在 `.rttsh/` 目录下），保存芯片名、超时等默认值；优先级为命令行 > 配置文件 > 内置默认值。
 - **设备数据库查询（list-devices）**：列出 J-Link DLL 支持的芯片名称，可 `--filter` 过滤，用于确认 `--chip` 的准确拼写。
 - **内置参考手册**：`rttsh manual` 打印配置文件键、`rtt.*` API 与脚本编写指南，不依赖网络文档。
 
@@ -99,7 +99,7 @@ rttsh: smoke.lua:2: expect: 'LED r = ON' not found within 500 ms; buffer tail: "
 
 ### 5. 使用配置文件保存连接参数
 
-`examples/stm32/.rttsh.config.json`：
+`examples/stm32/.rttsh/config.json`：
 
 ```json
 { "chip": "STM32H743XI", "scriptTimeout": 20000 }
@@ -155,11 +155,14 @@ rttsh --help     # 全部选项与默认值
 | `--wait <ms>` | send 500 / 交互无限制 | send / 重定向 monitor 打印接收数据的时长 |
 | `--script-timeout <ms>` | 关（0） | 整个脚本的硬性时限，在 `rtt.*` 调用边界检查 |
 | `--verbose` | 关 | 显示 J-Link 连接过程日志 |
-| `-c, --config <path>` | `./.rttsh.config.json` | 从 JSON 文件加载选项默认值 |
+| `-c, --config <path>` | `./.rttsh/config.json` | 从 JSON 文件加载选项默认值 |
+| `-C, --root <dir>` | — | 以 `<dir>` 为运行基准目录（git -C 语义）：隐式配置、`.rttsh/` 状态与所有相对路径均锚定到该目录 |
 
 ## 配置文件
 
-rttsh 支持从 JSON 文件读取选项默认值：显式 `--config <path>`（文件必须存在，否则退出码 2），或自动拾取工作目录下的 `./.rttsh.config.json`（存在则读取，缺失时跳过）。
+rttsh 支持从 JSON 文件读取选项默认值：显式 `--config <path>`（文件必须存在，否则退出码 2），或自动拾取工作目录下的 `./.rttsh/config.json`（存在则读取，缺失时跳过）。
+
+`-C/--root <dir>` 整体切换运行基准目录：隐式配置改从 `<dir>/.rttsh/config.json` 读取，`--elf` 解析缓存落在 `<dir>/.rttsh/elf-cache/`，所有相对路径（`elf`、`log`、`script`、`dll` 及显式 `--config`）也相对 `<dir>` 解析。`<dir>` 必须存在；其中没有配置不算错误。显式 `-c` 文件优先于根目录下的默认配置。
 
 优先级（逐选项）：**命令行 > 配置文件 > 内置默认值**；JSON `null` 视为未设置；同名键重复时后者生效。
 
@@ -218,6 +221,7 @@ rttsh send "help" --elf MDK-ARM/stm32-project/stm32-project.axf --wait 100
 - 该功能消除的故障模式：手工固定的错误地址使 RTT 打开在错误位置，写入持续无进展——`down-buffer made no progress ... (wrote 0/5 bytes)`。
 - 镜像中无该符号（固件未集成 RTT 或已 strip）仅警告，并回退到 SDK 的 RAM 扫描。
 - 文件级问题（路径不存在、不是 ELF、ELF64）为用法错误，退出码 2。
+- 解析结果缓存于 `./.rttsh/elf-cache/`：按镜像大小 + 修改时间比对，命中前再用条目内的内容哈希（SHA256）校验，因此时间戳相同的内容调包也不会用到过期符号；未重建的镜像可跳过解析。镜像原始字节不入缓存，删除 `.rttsh/elf-cache/` 总是安全的（旁边的 `.rttsh/config.json` 是配置文件）。
 
 ## Lua 脚本
 

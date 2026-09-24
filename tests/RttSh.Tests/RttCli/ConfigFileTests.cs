@@ -329,13 +329,30 @@ public class ConfigFileTests
     }
 
     [Fact]
+    public void A_config_path_that_exists_relative_to_the_caller_gets_pointed_out()
+    {
+        string caller = Directory.CreateDirectory(
+            Path.Combine(Path.GetTempPath(), $"rtt-cli-cfg-{Guid.NewGuid():N}")).FullName;
+        string path = "alt.json";
+        File.WriteAllText(Path.Combine(caller, path), """{ "chip": "FROM_CALLER" }""");
+
+        var options = new CommandLineOptions { CallerDirectory = caller };
+        var ex = Assert.Throws<UsageException>(() => ConfigFile.ApplyTo(options, path));
+
+        Assert.Contains("--config: file not found", ex.Message);
+        Assert.Contains("note: with --root", ex.Message);
+        Assert.Contains(Path.Combine(caller, path), ex.Message);
+    }
+
+    [Fact]
     public void Default_file_in_base_dir_is_loaded()
     {
         string dir = Path.Combine(Path.GetTempPath(), $"rtt-cli-cfg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(Path.Combine(dir, ConfigFile.DirName));
         try
         {
-            File.WriteAllText(Path.Combine(dir, ConfigFile.DefaultFileName), """{ "chip": "FROM_FILE" }""");
+            File.WriteAllText(Path.Combine(dir, ConfigFile.DirName, ConfigFile.FileName), """{ "chip": "FROM_FILE" }""");
             var options = new CommandLineOptions();
             ConfigFile.ApplyTo(options, configPath: null, baseDir: dir);
             Assert.Equal("FROM_FILE", options.Chip);
@@ -368,10 +385,11 @@ public class ConfigFileTests
     {
         string dir = Path.Combine(Path.GetTempPath(), $"rtt-cli-cfg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(Path.Combine(dir, ConfigFile.DirName));
         string explicitPath = Path.Combine(dir, "override.json");
         try
         {
-            File.WriteAllText(Path.Combine(dir, ConfigFile.DefaultFileName), """{ "chip": "from_default" }""");
+            File.WriteAllText(Path.Combine(dir, ConfigFile.DirName, ConfigFile.FileName), """{ "chip": "from_default" }""");
             File.WriteAllText(explicitPath, """{ "chip": "from_explicit" }""");
             var options = new CommandLineOptions();
             ConfigFile.ApplyTo(options, explicitPath, baseDir: dir);
@@ -406,10 +424,11 @@ public class ConfigFileTests
     {
         string dir = Path.Combine(Path.GetTempPath(), $"rtt-cli-cfg-{Guid.NewGuid():N}");
         Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(Path.Combine(dir, ConfigFile.DirName));
         try
         {
             // `-c ""` counts as "not provided": the default probe still applies
-            File.WriteAllText(Path.Combine(dir, ConfigFile.DefaultFileName), """{ "chip": "FROM_FILE" }""");
+            File.WriteAllText(Path.Combine(dir, ConfigFile.DirName, ConfigFile.FileName), """{ "chip": "FROM_FILE" }""");
             var options = new CommandLineOptions();
             ConfigFile.ApplyTo(options, configPath: "", baseDir: dir);
             Assert.Equal("FROM_FILE", options.Chip);

@@ -25,12 +25,15 @@ internal sealed class ConfigValues
     public string? Elf { get; set; }
 }
 
-/// <summary>JSON config file support (-c/--config, default .rttsh.config.json). Independent of
+/// <summary>JSON config file support (-c/--config, default ./.rttsh/config.json). Independent of
 /// the CLI surface: Parse validates JSON into ConfigValues, the merge fills unset
 /// CommandLineOptions members (CLI arguments always win), ApplyTo resolves the file path.</summary>
 internal static class ConfigFile
 {
-    public const string DefaultFileName = ".rttsh.config.json";
+    /// <summary>rttsh's local-state directory: the config file lives here, and so does the
+    /// --elf parse cache (ElfResolver). One directory per project, one ignore rule.</summary>
+    public const string DirName = ".rttsh";
+    public const string FileName = "config.json";
 
     /// <summary>Options the CLI knows but a file must not set: payload semantics (hex),
     /// command-specific wording (filter), session preferences (tui), the reset policy, and
@@ -51,11 +54,11 @@ internal static class ConfigFile
         {
             path = configPath;
             if (!File.Exists(path))
-                throw new UsageException($"--config: file not found: {path}");
+                throw new UsageException($"--config: file not found: {path}" + RttRoot.MissingPathNote(options, path));
         }
         else
         {
-            path = Path.Combine(baseDir ?? Environment.CurrentDirectory, DefaultFileName);
+            path = Path.Combine(baseDir ?? Environment.CurrentDirectory, DirName, FileName);
             if (!File.Exists(path)) return;   // no default file: run on CLI values alone
         }
 
