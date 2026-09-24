@@ -6,6 +6,8 @@ internal interface IInputSurface
 {
     void WriteLog(string text);
     bool TryAppendInputChar(char c);
-    void RedrawInput(string buffer);
+    /// <summary>Redraws the input row and places the caret at <paramref name="caret"/>
+    /// (an index into <paramref name="buffer"/>; its Length = after the last char).</summary>
+    void RedrawInput(string buffer, int caret);
     void CommitInput(string line);
 }

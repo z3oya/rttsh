@@ -28,6 +28,7 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
     private int _height;
     private int _width;
     private string _lastInput = "";
+    private int _lastCaret;   // caret index within _lastInput; Length = after the last char
     private long _lastResizeCheckTicks;
     private bool _disposed;
 
@@ -77,7 +78,7 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
             if (text.IndexOfAny(NewlineChars) >= 0)
                 text = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace("\n", "\r\n");
             // One console write per batch: fewer syscalls, and the sequence can never tear.
-            _out.Write($"{HideCursor}{Esc}8{text}{Esc}7{InputRowSequence(_lastInput)}");
+            _out.Write($"{HideCursor}{Esc}8{text}{Esc}7{InputRowSequence()}");
             _out.Flush();
         }
     }
@@ -85,7 +86,8 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
     /// <summary>Fast append while typing or pasting: when the buffer still fits the row, echo
     /// the single char in place (the caret already sits at the end of the shown text) instead
     /// of redrawing the whole line per keystroke. Returns false when the tail window would
-    /// shift (buffer outgrew the row) and the caller must fall back to a full redraw.</summary>
+    /// shift (buffer outgrew the row) and the caller must fall back to a full redraw. The
+    /// editor only calls this while typing at the end - any other edit redraws.</summary>
     public bool TryAppendInputChar(char c)
     {
         lock (_gate)
@@ -93,23 +95,26 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
             if (_disposed) return false;
             if (_lastInput.Length >= Math.Max(1, _width - 3)) return false;
             _lastInput += c;
+            _lastCaret = _lastInput.Length;   // the caret rides the append: a log burst redraw must find it at the end
             _out.Write(c);
             _out.Flush();
             return true;
         }
     }
 
-    /// <summary>Redraws the bottom input row with the current buffer (tail-shown when longer
-    /// than the row) and leaves the caret there, shown. Absolute positioning only - never
-    /// touches the log-cursor save slot.</summary>
-    public void RedrawInput(string buffer)
+    /// <summary>Redraws the bottom input row with the current buffer and the caret at
+    /// <paramref name="caret"/>. When the buffer is longer than the row, the visible window
+    /// follows the caret and the caret is placed explicitly. Absolute positioning only -
+    /// never touches the log-cursor save slot.</summary>
+    public void RedrawInput(string buffer, int caret)
     {
         lock (_gate)
         {
             if (_disposed) return;
             CheckResize();
             _lastInput = buffer;
-            _out.Write(InputRowSequence(buffer));
+            _lastCaret = caret;
+            _out.Write(InputRowSequence());
             _out.Flush();
         }
     }
@@ -122,7 +127,9 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
         {
             if (_disposed) return;
             CheckResize();
-            _out.Write($"{HideCursor}{Esc}8> {line}\r\n{Esc}7{InputRowSequence("")}");
+            _lastInput = "";
+            _lastCaret = 0;
+            _out.Write($"{HideCursor}{Esc}8> {line}\r\n{Esc}7{InputRowSequence()}");
             _out.Flush();
         }
     }
@@ -164,15 +171,21 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
                $"{Esc}[1;{logBottom}r" +                        // scroll region: rows 1..H-2
                $"{Esc}[{_height - 1};1H" + new string('-', _width) +
                $"{Esc}[1;1H{Esc}7" +                            // save slot = log cursor at top
-               InputRowSequence(_lastInput);
+               InputRowSequence();
     }
 
-    private string InputRowSequence(string buffer)
+    /// <summary>The input row redrawn from _lastInput/_lastCaret: clear row, show the window
+    /// around the caret, place the caret exactly. The caret index is clamped, so callers may
+    /// hold a stale value (e.g. after CommitInput cleared the row).</summary>
+    private string InputRowSequence()
     {
-        _lastInput = buffer;
+        int caret = Math.Clamp(_lastCaret, 0, _lastInput.Length);
         int usable = Math.Max(1, _width - 3);
-        string shown = buffer.Length <= usable ? buffer : buffer[^usable..];
-        return $"{Esc}[{_height};1H{Esc}[2K> {shown}{ShowCursor}";
+        int start = _lastInput.Length <= usable ? 0
+                  : Math.Clamp(caret - usable / 2, 0, _lastInput.Length - usable);
+        string shown = _lastInput[start..];
+        if (shown.Length > usable) shown = shown[..usable];
+        return $"{Esc}[{_height};1H{Esc}[2K> {shown}{Esc}[{_height};{3 + caret - start}H{ShowCursor}";
     }
 
     private static bool EnableVt()
