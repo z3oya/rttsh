@@ -112,6 +112,16 @@ public class InputHistoryTests
     }
 
     [Fact]
+    public void Seeded_history_dedups_against_its_restored_last_entry()
+    {
+        var history = new InputHistory(["a", "b"]);   // restored from .rttsh/tui-history.json
+
+        history.Record("b");   // first submit repeats the newest restored line
+
+        Assert.Equal(["a", "b"], history.Entries);   // seeding flows through Record: no growth
+    }
+
+    [Fact]
     public void Non_consecutive_duplicates_are_both_kept()
     {
         var history = new InputHistory();

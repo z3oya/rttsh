@@ -1,14 +1,31 @@
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>Submitted-line history for one monitor session, navigated with Up/Down in the
-/// input editor. Lives only for the process lifetime (nothing is persisted) and is owned by
-/// the input thread: ConsoleInput navigates, Program records, no other thread touches it.
+/// input editor. Owned by the input thread: ConsoleInput navigates, Program records, no other
+/// thread touches it until the thread is done - a -tui session's main thread seeds the
+/// history from .rttsh/tui-history.json (TuiHistoryFile) before starting the thread and reads
+/// <see cref="Entries"/> back only after done.Wait(), which orders that hand-off both ways.
 /// Readline-like semantics: the first Up saves the typed buffer as the draft and recalls the
 /// newest entry, Up clamps at the oldest, Down past the newest restores the draft (edits made
 /// to a recalled line are not kept). Record ignores empty lines and consecutive duplicates,
 /// and returns the navigation position to the live end.</summary>
 internal sealed class InputHistory
 {
+    /// <summary>Seeds a history restored from disk; every line goes through <see cref="Record"/>,
+    /// so file junk (empty lines, consecutive duplicates) is normalized and navigation starts
+    /// at the live end.</summary>
+    public InputHistory(IEnumerable<string> entries)
+    {
+        foreach (string line in entries)
+            Record(line);
+    }
+
+    public InputHistory() { }
+
+    /// <summary>The recorded lines, oldest first. For persistence only - read once the input
+    /// thread is done.</summary>
+    public IReadOnlyList<string> Entries => _entries;
+
     private readonly List<string> _entries = [];
     /// <summary>Navigation position; == <see cref="_entries"/>.Count means the live editing
     /// position (not on any entry).</summary>

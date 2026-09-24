@@ -83,7 +83,13 @@ internal static class MonitorSession
 
             // Line input runs on a background thread so the main thread stays wakeable.
             if (interactive) Console.TreatControlCAsInput = true;
-            var history = new InputHistory();   // session-only; owned by the input thread
+            var history = new InputHistory();   // owned by the input thread (see InputHistory doc)
+            string? historyFile = null;         // -tui only: recall persists in .rttsh/tui-history.json
+            if (ui is not null)
+            {
+                historyFile = Path.Combine(Environment.CurrentDirectory, ConfigFile.DirName, TuiHistoryFile.FileName);
+                history = TuiHistoryFile.Load(historyFile);
+            }
             var inputThread = new Thread(() =>
             {
                 try
@@ -126,6 +132,7 @@ internal static class MonitorSession
 
             done.Wait();
             transport.Close();   // joins the poll thread before the UI is torn down below
+            if (historyFile is not null) TuiHistoryFile.Save(historyFile, history);
             return exitCode.Value;
         }
         finally

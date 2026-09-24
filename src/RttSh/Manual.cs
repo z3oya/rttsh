@@ -202,5 +202,8 @@ internal static class Manual
             default); it is enforced at rtt.* call boundaries
           - the first Ctrl+C asks the script to stop at the next rtt.*
             boundary; a second Ctrl+C hard-exits
+          - -tui input history (Up/Down recall) persists across runs in
+            ./.rttsh/tui-history.json - the newest 500 lines, rewritten
+            when a session ends; deleting the file is always safe
         """;
 }
