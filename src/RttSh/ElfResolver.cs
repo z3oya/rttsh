@@ -27,14 +27,16 @@ internal static class ElfResolver
     }
 
     /// <summary>Applies --elf to the options: no-op without a path, otherwise load, decide,
-    /// announce, and pin. Called from Program's pre-dispatch switch for monitor/send/script.</summary>
-    public static void Apply(CommandLineOptions options)
+    /// announce, and pin. Called from Program's pre-dispatch switch for monitor/send/script.
+    /// cacheRoot defaults to the working directory, making ./.rttsh/elf-cache the cache home
+    /// (ElfResolver owns that layout - Core only ever sees the finished directory).</summary>
+    public static void Apply(CommandLineOptions options, string? cacheRoot = null)
     {
         if (string.IsNullOrEmpty(options.ElfPath))
             return;
 
         ElfDecision decision = Decide(options.RttAddress, options.RttRange is not null, options.ElfPath,
-            () => LoadOrUsage(options.ElfPath));
+            () => LoadOrUsage(options, cacheRoot ?? Environment.CurrentDirectory));
 
         SessionSupport.WriteDiag($"rttsh: {decision.Message}");
         if (decision.Override)
@@ -71,17 +73,20 @@ internal static class ElfResolver
     }
 
     /// <summary>File-level problems are usage errors with the option's own prefix; the exact
-    /// message of the underlying IO failure is kept for locked/ACL cases.</summary>
-    private static ElfImage LoadOrUsage(string path)
+    /// message of the underlying IO failure is kept for locked/ACL cases. Loads go through the
+    /// ElfImageCache: the cache only ever changes speed, its failures degrade to a plain
+    /// parse, and the IO exceptions caught here are exactly FromFile's.</summary>
+    private static ElfImage LoadOrUsage(CommandLineOptions options, string cacheRoot)
     {
         try
         {
-            return ElfImage.FromFile(path);
+            return ElfImageCache.Load(options.ElfPath, Path.Combine(cacheRoot, ConfigFile.DirName, "elf-cache"));
         }
         catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException
                                        or IOException or UnauthorizedAccessException)
         {
-            throw new UsageException($"--elf: cannot read '{path}': {ex.Message}");
+            throw new UsageException(
+                $"--elf: cannot read '{options.ElfPath}': {ex.Message}" + RttRoot.MissingPathNote(options, options.ElfPath));
         }
     }
 }
