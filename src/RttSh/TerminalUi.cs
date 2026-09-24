@@ -28,7 +28,8 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
     private int _height;
     private int _width;
     private string _lastInput = "";
-    private int _lastCaret;   // caret index within _lastInput; Length = after the last char
+    private int _lastCaret;     // caret char index within _lastInput; Length = after the last char
+    private int _windowStart;   // preferred left edge of the visible input window (a char index)
     private long _lastResizeCheckTicks;
     private bool _disposed;
 
@@ -83,17 +84,28 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
         }
     }
 
+    /// <summary>Pure half of <see cref="TryAppendInputChar"/>, so the fit rule is testable
+    /// without a console: the char can echo in place only when the current window stays put
+    /// (no slide) and the shown text plus the new char still fit the row's cell budget. The
+    /// state updates on success remain with the caller.</summary>
+    internal static bool FastAppendFits(int width, string buffer, int windowStart, char c)
+    {
+        (int start, _, int caretColumn) = ComputeWindow(width, buffer, buffer.Length, windowStart);
+        return start == windowStart && caretColumn - 3 + DisplayWidth.Of(c) <= Math.Max(1, width - 3);
+    }
+
     /// <summary>Fast append while typing or pasting: when the buffer still fits the row, echo
     /// the single char in place (the caret already sits at the end of the shown text) instead
     /// of redrawing the whole line per keystroke. Returns false when the tail window would
-    /// shift (buffer outgrew the row) and the caller must fall back to a full redraw. The
-    /// editor only calls this while typing at the end - any other edit redraws.</summary>
+    /// shift (the row is full in cells, which with CJK input comes before the row is full in
+    /// chars) and the caller must fall back to a full redraw. The editor only calls this while
+    /// typing at the end - any other edit redraws.</summary>
     public bool TryAppendInputChar(char c)
     {
         lock (_gate)
         {
             if (_disposed) return false;
-            if (_lastInput.Length >= Math.Max(1, _width - 3)) return false;
+            if (!FastAppendFits(_width, _lastInput, _windowStart, c)) return false;
             _lastInput += c;
             _lastCaret = _lastInput.Length;   // the caret rides the append: a log burst redraw must find it at the end
             _out.Write(c);
@@ -103,9 +115,10 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
     }
 
     /// <summary>Redraws the bottom input row with the current buffer and the caret at
-    /// <paramref name="caret"/>. When the buffer is longer than the row, the visible window
-    /// follows the caret and the caret is placed explicitly. Absolute positioning only -
-    /// never touches the log-cursor save slot.</summary>
+    /// <paramref name="caret"/>. When the buffer does not fit the row, the visible window
+    /// slides only as far as the caret requires and the caret is placed by cell width
+    /// (CJK chars count double). Absolute positioning only - never touches the log-cursor
+    /// save slot.</summary>
     public void RedrawInput(string buffer, int caret)
     {
         lock (_gate)
@@ -174,18 +187,55 @@ internal sealed class TerminalUi : IDisposable, IInputSurface
                InputRowSequence();
     }
 
-    /// <summary>The input row redrawn from _lastInput/_lastCaret: clear row, show the window
-    /// around the caret, place the caret exactly. The caret index is clamped, so callers may
-    /// hold a stale value (e.g. after CommitInput cleared the row).</summary>
+    /// <summary>The input row redrawn from the fields: clear row, show the window around the
+    /// caret, place the caret exactly. The caret index is clamped by <see cref="ComputeWindow"/>,
+    /// so callers may hold a stale value (e.g. after CommitInput cleared the row).</summary>
     private string InputRowSequence()
     {
-        int caret = Math.Clamp(_lastCaret, 0, _lastInput.Length);
-        int usable = Math.Max(1, _width - 3);
-        int start = _lastInput.Length <= usable ? 0
-                  : Math.Clamp(caret - usable / 2, 0, _lastInput.Length - usable);
-        string shown = _lastInput[start..];
-        if (shown.Length > usable) shown = shown[..usable];
-        return $"{Esc}[{_height};1H{Esc}[2K> {shown}{Esc}[{_height};{3 + caret - start}H{ShowCursor}";
+        (int start, string shown, int caretColumn) = ComputeWindow(_width, _lastInput, _lastCaret, _windowStart);
+        _windowStart = start;
+        return $"{Esc}[{_height};1H{Esc}[2K> {shown}{Esc}[{_height};{caretColumn}H{ShowCursor}";
+    }
+
+    /// <summary>Pure layout math for the input row, unit-testable without a console: pick the
+    /// visible window of <paramref name="buffer"/> that contains <paramref name="caret"/>,
+    /// returning its start, its text, and the caret's row column (1-based, including the
+    /// "&gt; " prefix).
+    ///
+    /// Columns are cells, not chars - a CJK char is two cells (DisplayWidth), so a wide char
+    /// never straddles the right edge and the caret lands between painted glyphs. The window
+    /// slides the previous one (<paramref name="preferredStart"/>) only as far as the caret
+    /// demands; when the buffer fits, or the window reaches the buffer end, it extends back
+    /// left to fill the row. Stale inputs are clamped (caret into the buffer, a preferred
+    /// start that a delete has invalidated). The loop terminates: the window at worst shrinks
+    /// to the single char under the caret.</summary>
+    internal static (int Start, string Shown, int CaretColumn) ComputeWindow(int width, string buffer, int caret, int preferredStart)
+    {
+        int usable = Math.Max(1, width - 3);
+        caret = Math.Clamp(caret, 0, buffer.Length);
+        int start = Math.Clamp(preferredStart, 0, caret);
+        while (true)
+        {
+            int end = start, cells = 0;
+            while (end < buffer.Length)
+            {
+                int w = DisplayWidth.Of(buffer[end]);
+                if (cells + w > usable) break;
+                cells += w;
+                end++;
+            }
+            if (caret > end)
+            {
+                start++;                          // caret right of the window: slide and retry
+                continue;
+            }
+            while (end == buffer.Length && start > 0 && cells + DisplayWidth.Of(buffer[start - 1]) <= usable)
+            {
+                start--;                          // window right-aligned: fill the slack to its left
+                cells += DisplayWidth.Of(buffer[start]);
+            }
+            return (start, buffer[start..end], 3 + DisplayWidth.OfRange(buffer, start, caret));
+        }
     }
 
     private static bool EnableVt()
