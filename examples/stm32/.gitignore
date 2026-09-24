@@ -36,3 +36,6 @@ MDK-ARM/*.scvd
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+.rttsh/elf-cache
+.rttsh/tui-history.json

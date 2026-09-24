@@ -480,9 +480,3 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
-
-# rttsh local state: the root .rttsh/ is ignored wholesale, while in tracked
-# project dirs (examples/stm32/.rttsh/config.json and friends) only the elf
-# parse cache is ignored and config.json stays versioned
-/.rttsh/
-**/.rttsh/elf-cache/
