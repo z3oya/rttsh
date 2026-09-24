@@ -170,6 +170,17 @@ internal static class Manual
           rtt.send("tick")
           rtt.expect("tick: off", 500)
 
+        To assert timing, bracket the exchange with rtt.now() and require
+        the elapsed window (the example firmware delays async1 by the
+        requested time):
+
+          local t0 = rtt.now()
+          rtt.send("async1 300")
+          rtt.expect("async1 #%d+ accepted, due in 300 ms", 500)
+          rtt.expect("async1 #%d+ done", 2000)
+          local elapsed = rtt.now() - t0
+          assert(elapsed >= 280 and elapsed <= 1300, "timing out of window")
+
         Lua 5.4 patterns, not regex:
           - a bare [ opens a character class and an incomplete class raises
             immediately; match a literal bracket as %[ (and ] as %])

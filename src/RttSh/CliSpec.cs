@@ -86,7 +86,8 @@ internal static class CliSpec
         Option<bool> hex = Flag("--hex", "show payload as a 16-byte-per-line hex dump (send: parse payload as hex)");
         Option<bool> tui = Flag("--tui", ["-tui"],
             "(monitor only) chat-style layout: log on top, \"> \" input pinned to the bottom " +
-            "(off by default; needs a VT terminal); Up/Down recall previously sent lines");
+            "(off by default; needs a VT terminal); Up/Down recall sent lines (persisted in " +
+            ".rttsh/tui-history.json); Left/Right/Home/End move the caret, Delete/Backspace edit");
         Option<bool> verbose = Flag("--verbose",
             "show J-Link connection progress logs (default: quiet; runtime errors are always shown)");
         Option<string?> log = TextOption("--log", "file", "log file",
