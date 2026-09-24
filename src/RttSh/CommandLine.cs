@@ -38,6 +38,12 @@ internal sealed class CommandLineOptions
     public string? DeviceFilter { get; set; }
     /// <summary>-c/--config: JSON file to load option defaults from; an explicit path must exist.</summary>
     public string? ConfigPath { get; set; }
+    /// <summary>-C/--root: run as if started in this directory (RttRoot applies it before the
+    /// config merge), so the implicit ./.rttsh state and every relative path anchor there.</summary>
+    public string? RootDir { get; set; }
+    /// <summary>Set by RttRoot when --root moved the working directory: where the process was
+    /// started, so path errors can point at where a caller-relative path actually lives.</summary>
+    public string? CallerDirectory { get; set; }
     /// <summary>--elf: firmware image (ELF32) to resolve the RTT control-block address from.
     /// Resolved before dispatch (ElfResolver); an explicit RttAddress always wins.</summary>
     public string? ElfPath { get; set; }
@@ -51,7 +57,7 @@ internal sealed class CommandLineOptions
     public RttConnectionConfig ToConnectionConfig(bool resetDefault)
     {
         if (Chip.Length == 0)
-            throw new UsageException("missing required option --chip <device> (see rttsh list-devices, or set 'chip' in .rttsh.config.json)");
+            throw new UsageException("missing required option --chip <device> (see rttsh list-devices, or set 'chip' in .rttsh/config.json)");
         int channel = Channel ?? 0;
         if (channel is < 0 or > RttConnectionConfig.MaxChannel)
             throw new UsageException($"--channel: expected 0-{RttConnectionConfig.MaxChannel}, got {Channel}");
@@ -214,6 +220,7 @@ internal static class CommandLine
         ScriptTimeoutMs = p.GetValue(s.ScriptTimeout),
         DeviceFilter = p.GetValue(s.Filter),
         ConfigPath = p.GetValue(s.Config),
+        RootDir = p.GetValue(s.RootDir),
         ElfPath = p.GetValue(s.Elf),
     };
 }
