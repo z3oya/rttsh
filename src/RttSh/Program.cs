@@ -4,7 +4,7 @@ using Toolbox.Tools.RttCli.Scripting;
 
 namespace Toolbox.Tools.RttCli;
 
-/// <summary>Entry point: parse, dispatch (monitor / send / script / list-devices), exit codes.
+/// <summary>Entry point: parse, dispatch (monitor / send / script / flash / list-devices), exit codes.
 /// Data goes to stdout, every diagnostic to stderr, so stdout stays pipeable.
 ///
 /// The exit path never calls Environment.Exit (deadlock-prone next to the native DLL): threads
@@ -61,6 +61,10 @@ internal static class Program
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
                 break;
+            case FlashCommand c:
+                RttRoot.Apply(c.Options);
+                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                break;
         }
 
         return command switch
@@ -73,6 +77,8 @@ internal static class Program
             MonitorCommand c => MonitorSession.Run(c.Options),
             SendCommand c => SendOnce.Run(c),
             ScriptCommand c => ScriptSession.Run(c),
+            FlashDownloadCommand c => FlashOnce.Run(c),
+            FlashEraseCommand c => FlashOnce.RunErase(c),
             _ => UsageError("internal: unhandled command"),
         };
     }

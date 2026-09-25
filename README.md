@@ -14,10 +14,11 @@ t01 PASS (id=43)
 
 ## 功能特性
 
-- **Lua 自动化在板验证（script）**：`rtt.*` API 覆盖发送、期望、二进制收发与毫秒级计时断言；expect 超时即失败，错误信息带接收缓冲区尾部。
+- **Lua 自动化在板验证（script）**：`rtt.*` API 覆盖发送、期望、二进制收发、毫秒级计时断言，以及目标内存读写（`rtt.mem_read`/`rtt.mem_write`）与 halt/resume 核心控制；expect 超时即失败，错误信息带接收缓冲区尾部。
 - **零额外通信外设**：RTT 经调试探针收发，固件不占 UART；会话按"探针 + 通道"互斥。
 - **交互监控（monitor）**：直接运行即进入实时终端；`-tui` 为对话式布局，支持历史翻阅、光标移动编辑，历史跨会话持久化。
 - **单发探测（send）**：发送一行并接收应答（`--wait`），支持十六进制原始字节。
+- **固件烧录（flash）**：`flash download` 烧录 Intel hex / ELF / S-record(.mot) / raw .bin（DLL 内部完成擦除+编程+校验，带进度显示，`--reset` 烧后复位运行）；`flash erase` 整片擦除（交互确认，重定向 stdin 需 `--yes`）。两者完成后核心保持 halted，除非带 `--reset`。
 - **控制块地址解析（`--elf`）**：从固件镜像的 `_SEGGER_RTT` 符号解析 RTT 控制块地址，随重编译自动更新。
 - **JSON 配置文件**：`.rttsh/config.json` 按工作目录自动加载芯片名等默认值，优先级为命令行 > 配置文件 > 内置默认值。
 - **设备数据库查询（list-devices）**：确认 `--chip` 在 J-Link 设备库中的准确拼写。
@@ -114,6 +115,8 @@ rttsh send "help" --elf MDK-ARM/stm32-project/stm32-project.axf --wait 100
 | （无子命令） | monitor：交互式 RTT 终端 |
 | `send <text>` | 发送一次，可选等待应答 |
 | `script [<file.lua>]` | 运行 Lua 自动化脚本（或 `--eval <lua 代码>`） |
+| `flash download <file>` | 烧录固件镜像；hex/elf/mot 自带地址，raw .bin 需 `--addr`，`--reset` 烧后复位（否则核心保持 halted） |
+| `flash erase` | 整片擦除 flash；交互确认，重定向 stdin 需 `--yes`；`--reset` 擦后复位（否则核心保持 halted） |
 | `list-devices` | 列出 J-Link DLL 设备数据库（可 `--filter` 过滤） |
 | `manual` | 打印参考手册 |
 

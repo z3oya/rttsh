@@ -46,6 +46,12 @@ internal sealed class Spec
     public required Option<string?> Elf { get; init; }
     public required Option<string?> Eval { get; init; }
     public required Command Manual { get; init; }
+    public required Command Flash { get; init; }
+    public required Command FlashDownload { get; init; }
+    public required Command FlashErase { get; init; }
+    public required Option<uint?> Addr { get; init; }
+    public required Option<bool> Yes { get; init; }
+    public required Argument<string> FlashFile { get; init; }
 }
 
 /// <summary>Option/command declarations plus the small conversion helpers. Error wording
@@ -109,11 +115,17 @@ internal static class CliSpec
         Option<string?> elf = TextOption("--elf", "path", "file",
             "monitor/send/script: resolve the RTT control block from a firmware image's " +
             "_SEGGER_RTT symbol (ELF32; an explicit --rtt-addr/--rttAddr wins)");
+        Option<uint?> addr = HexOption("--addr", "hex", "address",
+            "flash download: load address for a raw .bin image (hex/elf/S-record images " +
+            "carry their own addresses and reject --addr)");
+        Option<bool> yes = Flag("--yes",
+            "flash erase: skip the interactive confirmation (required when stdin is redirected)");
 
         var root = new RootCommand("rttsh - SEGGER J-Link RTT terminal");
         foreach (Option option in new Option[]
                  { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
-                   encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir, elf })
+                   encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir, elf,
+                   addr, yes })
             root.Options.Add(option);
 
         Command listDevices = new("list-devices", "list the J-Link DLL device database");
@@ -152,9 +164,28 @@ internal static class CliSpec
 
         Command manual = new("manual", "print the reference: config file keys, the rtt.* scripting API, script mechanics");
 
+        Command flashDownloadCommand = new("download",
+            "program a firmware image (Intel hex / ELF / S-record / raw .bin) to the target's flash; " +
+            "the core stays halted afterwards unless --reset resumes it");
+        Command flashEraseCommand = new("erase",
+            "erase the whole chip's flash (destructive; --yes skips the interactive confirmation; " +
+            "the core stays halted afterwards unless --reset resumes it)");
+
+        Command flash = new("flash",
+            "flash download <file> / flash erase: program or erase the target's flash (no RTT link; takes the same per-target lock)");
+        Argument<string> flashFile = new("file")
+        {
+            Description = "image to program: .hex/.elf/.mot carry their own load addresses; a raw .bin needs --addr",
+        };
+        flashDownloadCommand.Arguments.Add(flashFile);
+        flash.Subcommands.Add(flashDownloadCommand);
+        flash.Subcommands.Add(flashEraseCommand);
+        flash.Action = new FlashGroupAction();   // lets bare 'flash' parse; CommandLine maps it to a usage error
+
         root.Subcommands.Add(listDevices);
         root.Subcommands.Add(send);
         root.Subcommands.Add(script);
+        root.Subcommands.Add(flash);
         root.Subcommands.Add(manual);
         // A root with subcommands demands one ("Required command was not provided") unless
         // it has its own action; Parse never invokes it - the mapping layer turns the
@@ -202,6 +233,12 @@ internal static class CliSpec
             Elf = elf,
             Eval = eval,
             Manual = manual,
+            Flash = flash,
+            FlashDownload = flashDownloadCommand,
+            FlashErase = flashEraseCommand,
+            Addr = addr,
+            Yes = yes,
+            FlashFile = flashFile,
         };
     }
 
@@ -321,6 +358,14 @@ internal static class CliSpec
     /// <summary>Never runs (Parse-only mapping); its presence marks "root invoked without a
     /// subcommand" as valid - the default monitor command.</summary>
     private sealed class MonitorAction : SynchronousCommandLineAction
+    {
+        public override int Invoke(ParseResult parseResult) => 0;
+    }
+
+    /// <summary>Never runs (Parse-only mapping); its presence stops the parser from demanding a
+    /// subcommand under bare `flash`, so CommandLine can map that shape onto a friendly usage
+    /// error instead of the library's "Required command was not provided".</summary>
+    private sealed class FlashGroupAction : SynchronousCommandLineAction
     {
         public override int Invoke(ParseResult parseResult) => 0;
     }

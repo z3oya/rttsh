@@ -44,6 +44,11 @@ internal sealed class CommandLineOptions
     /// <summary>Set by RttRoot when --root moved the working directory: where the process was
     /// started, so path errors can point at where a caller-relative path actually lives.</summary>
     public string? CallerDirectory { get; set; }
+    /// <summary>--flash download: raw .bin images must pair with --addr (FlashImage validates the
+    /// pairing after sniffing; the option itself only carries a value here).</summary>
+    public uint? Addr { get; set; }
+    /// <summary>--yes: flash erase's confirmation bypass (required when stdin is redirected).</summary>
+    public bool Yes { get; set; }
     /// <summary>--elf: firmware image (ELF32) to resolve the RTT control-block address from.
     /// Resolved before dispatch (ElfResolver); an explicit RttAddress always wins.</summary>
     public string? ElfPath { get; set; }
@@ -81,6 +86,11 @@ internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
+/// <summary>Base of the two flash subcommands: the pre-dispatch options pass in Program
+/// treats them identically (connect options, no RTT link).</summary>
+internal abstract record FlashCommand(CommandLineOptions Options) : RttCommand;
+internal sealed record FlashDownloadCommand(string FilePath, CommandLineOptions Options) : FlashCommand(Options);
+internal sealed record FlashEraseCommand(CommandLineOptions Options) : FlashCommand(Options);
 
 /// <summary>Library-rendered help text (CliSpec.HelpText), ready to print.</summary>
 internal sealed record HelpCommand(string Text) : RttCommand;
@@ -94,6 +104,10 @@ internal sealed record UsageErrorCommand(string Message) : RttCommand;
 /// return-UsageErrorCommand-vs-throw-UsageException split that the tests pin down.</summary>
 internal static class CommandLine
 {
+    /// <summary>Bare-flash wording, shared by the args[0] pre-check and the parse-level
+    /// mapping (the backstop) so the two cannot drift.</summary>
+    private const string FlashMissingSubcommand = "flash: missing subcommand - use 'flash download <file>' or 'flash erase'";
+
     public static RttCommand Parse(string[] args)
     {
         // legacy bare words, exactly at args[0] like the old switch did
@@ -126,6 +140,20 @@ internal static class CommandLine
             {
                 return new UsageErrorCommand("script: missing <file.lua> path (or --eval <code>)");
             }
+        }
+
+        if (args.Length > 0 && args[0] == "flash" && !HasPassthroughToken(args))
+        {
+            // Every option is recursive, so the subcommand and the image path may sit anywhere
+            // on the line - scan for them instead of staring at args[1]/args[2] (which mis-reads
+            // e.g. "flash download --chip X app.bin" as a missing file). Help/version spellings
+            // pass through via HasPassthroughToken, and the parse-level mapping below stays the
+            // backstop for odd shapes like "--chip X flash".
+            int download = Array.IndexOf(args, "download");
+            if (download < 0 && Array.IndexOf(args, "erase") < 0)
+                return new UsageErrorCommand(FlashMissingSubcommand);
+            if (download >= 0 && !HasNonOptionTokenAfter(args, download))
+                return new UsageErrorCommand("flash download: missing <file> image path");
         }
 
         // parse-only: the library reports problems via ParseResult.Errors and prints nothing
@@ -163,6 +191,12 @@ internal static class CommandLine
             return new ListDevicesCommand(options);
         if (command == spec.Manual)
             return new ManualCommand();
+        if (command == spec.Flash)
+            return new UsageErrorCommand(FlashMissingSubcommand);
+        if (command == spec.FlashDownload)
+            return new FlashDownloadCommand(parsed.GetValue(spec.FlashFile)!, options);
+        if (command == spec.FlashErase)
+            return new FlashEraseCommand(options);
         return new MonitorCommand(options);   // no subcommand = default monitor
     }
 
@@ -174,6 +208,34 @@ internal static class CommandLine
     private static bool IsNonHelpOption(string arg) =>
         arg.StartsWith("--") && arg is not ("--help" or "--");
 
+    /// <summary>Tokens the flash pre-checks must not claim: help/version spellings render
+    /// their own output from the parser, and the bare "--" end-of-options separator is
+    /// consumed there too (what follows it is payload/path material).</summary>
+    private static bool IsPassthroughToken(string arg) =>
+        arg is "--help" or "-h" or "--version" or "-v" or "--";
+
+    private static bool HasPassthroughToken(string[] args)
+    {
+        foreach (string arg in args)
+        {
+            if (IsPassthroughToken(arg)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>True when a non-option token follows the one at <paramref name="index"/>:
+    /// for `flash download` that token can be the image path (or an option's value - a wrong
+    /// guess only falls through to the parser, which knows the difference). Single-dash
+    /// tokens stay path material, as everywhere else.</summary>
+    private static bool HasNonOptionTokenAfter(string[] args, int index)
+    {
+        for (int i = index + 1; i < args.Length; i++)
+        {
+            if (!args[i].StartsWith("--")) return true;
+        }
+        return false;
+    }
+
     /// <summary>Parse args for re-rendering help of the matched command (one level deep).</summary>
     private static string[] HelpArgs(Command matched, Spec spec)
     {
@@ -181,6 +243,9 @@ internal static class CommandLine
         if (matched == spec.Script) return ["script", "--help"];
         if (matched == spec.ListDevices) return ["list-devices", "--help"];
         if (matched == spec.Manual) return ["manual", "--help"];
+        if (matched == spec.Flash) return ["flash", "--help"];
+        if (matched == spec.FlashDownload) return ["flash", "download", "--help"];
+        if (matched == spec.FlashErase) return ["flash", "erase", "--help"];
         return ["--help"];
     }
 
@@ -222,5 +287,7 @@ internal static class CommandLine
         ConfigPath = p.GetValue(s.Config),
         RootDir = p.GetValue(s.RootDir),
         ElfPath = p.GetValue(s.Elf),
+        Addr = p.GetValue(s.Addr),
+        Yes = p.GetValue(s.Yes),
     };
 }
