@@ -20,7 +20,7 @@ internal sealed class Spec
     public required Command Script { get; init; }
     public required HelpOption Help { get; init; }
     public required VersionOption Version { get; init; }
-    public required Argument<string> Payload { get; init; }
+    public required Argument<string?> Payload { get; init; }
     public required Argument<string?> ScriptFile { get; init; }
     public required Option<string?> Chip { get; init; }
     public required Option<int?> Speed { get; init; }
@@ -52,6 +52,23 @@ internal sealed class Spec
     public required Option<uint?> Addr { get; init; }
     public required Option<bool> Yes { get; init; }
     public required Argument<string> FlashFile { get; init; }
+    /// <summary>The recursive option pool - the "--" tokens any subcommand's line may carry.
+    /// Excludes "--eval" (script-only, matched separately by its caller) and help/version
+    /// (root-only, so under a subcommand they must count as unknown tokens).</summary>
+    public required Option[] KnownOptions { get; init; }
+
+    /// <summary>Looks a "--" token up in the pool by canonical name or alias; null when it is
+    /// not one of them. Driven by the declarations, so a newly added recursive option is
+    /// recognized without touching a static list.</summary>
+    public Option? FindOption(string name)
+    {
+        foreach (Option option in KnownOptions)
+        {
+            if (option.Name == name || option.Aliases.Contains(name))
+                return option;
+        }
+        return null;
+    }
 }
 
 /// <summary>Option/command declarations plus the small conversion helpers. Error wording
@@ -121,18 +138,22 @@ internal static class CliSpec
         Option<bool> yes = Flag("--yes",
             "flash erase: skip the interactive confirmation (required when stdin is redirected)");
 
+        Option[] knownOptions =
+            [chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
+             encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir, elf,
+             addr, yes];
         var root = new RootCommand("rttsh - SEGGER J-Link RTT terminal");
-        foreach (Option option in new Option[]
-                 { chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
-                   encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir, elf,
-                   addr, yes })
+        foreach (Option option in knownOptions)
             root.Options.Add(option);
 
         Command listDevices = new("list-devices", "list the J-Link DLL device database");
 
         Command send = new("send", "send once, optionally wait for a reply");
-        Argument<string> payload = new("text")
+        Argument<string?> payload = new("text")
         {
+            // optional at the parse level so the library's "Required argument missing" never
+            // masks the legacy wording; the mapping layer in CommandLine enforces it instead
+            Arity = ArgumentArity.ZeroOrOne,
             Description = "text to send; \\n \\r \\t \\\\ escapes are interpreted; to send a value starting with --, use: send -- --value",
         };
         send.Arguments.Add(payload);
@@ -239,6 +260,7 @@ internal static class CliSpec
             Addr = addr,
             Yes = yes,
             FlashFile = flashFile,
+            KnownOptions = knownOptions,
         };
     }
 

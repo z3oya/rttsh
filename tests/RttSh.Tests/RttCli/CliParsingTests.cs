@@ -141,10 +141,131 @@ public class CliParsingTests
     }
 
     [Fact]
-    public void Send_requires_the_payload_immediately()
+    public void Options_may_precede_the_send_payload()
     {
-        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--chip", "X"]));
-        Assert.Contains("send", error.Message);
+        var command = Assert.IsType<SendCommand>(CommandLine.Parse(["send", "--chip", "STM32H743XI", "reboot"]));
+        Assert.Equal("reboot", command.Payload);
+        Assert.Equal("STM32H743XI", command.Options.Chip);
+    }
+
+    [Fact]
+    public void Options_may_precede_the_script_path()
+    {
+        var command = Assert.IsType<ScriptCommand>(CommandLine.Parse(["script", "--script-timeout", "70000", "run.lua"]));
+        Assert.Equal("run.lua", command.ScriptPath);
+        Assert.Equal(70000, command.Options.ScriptTimeoutMs);
+    }
+
+    [Fact]
+    public void Options_may_precede_the_eval_source()
+    {
+        var command = Assert.IsType<ScriptCommand>(CommandLine.Parse(["script", "--chip", "STM32H743XI", "--eval", "rtt.log(1)"]));
+        Assert.Null(command.ScriptPath);
+        Assert.Equal("rtt.log(1)", command.EvalSource);
+    }
+
+    [Fact]
+    public void Eval_accepts_the_equals_spelling()
+    {
+        var command = Assert.IsType<ScriptCommand>(CommandLine.Parse(["script", "--eval=rtt.log('x')"]));
+        Assert.Null(command.ScriptPath);
+        Assert.Equal("rtt.log('x')", command.EvalSource);
+    }
+
+    [Fact]
+    public void Script_timeout_without_a_path_still_says_missing_path()
+    {
+        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "--script-timeout", "70000"]));
+        Assert.Contains("script: missing <file.lua> path (or --eval <code>)", error.Message);
+    }
+
+    [Fact]
+    public void Send_with_only_options_still_says_missing_payload()
+    {
+        // options alone never take the payload slot, wherever they sit
+        var withChip = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--chip", "STM32H743XI"]));
+        Assert.Contains("send: missing <text> payload", withChip.Message);
+        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--wait", "500"]));
+        Assert.Contains("send: missing <text> payload", error.Message);
+    }
+
+    [Fact]
+    public void Send_subcommand_after_options_keeps_the_legacy_backstop()
+    {
+        // the pre-check only fires at args[0]; the parse-level mapping carries the wording
+        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["--chip", "STM32H743XI", "send"]));
+        Assert.Contains("send: missing <text> payload", error.Message);
+    }
+
+    [Fact]
+    public void Script_subcommand_after_options_keeps_the_legacy_backstop()
+    {
+        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["--chip", "STM32H743XI", "script"]));
+        Assert.Contains("script: missing <file.lua> path (or --eval <code>)", error.Message);
+    }
+
+    [Fact]
+    public void Unknown_option_before_the_payload_is_claimed_not_silent()
+    {
+        // the slot is still empty, so the parser would slide "--bogus" into the payload and
+        // send the typo to the firmware; the pre-check claims the line instead
+        var send = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--chip", "STM32H743XI", "--bogus"]));
+        Assert.Contains("send: missing <text> payload", send.Message);
+        var script = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "--chip", "STM32H743XI", "--bogus"]));
+        Assert.Contains("script: missing <file.lua> path (or --eval <code>)", script.Message);
+    }
+
+    [Fact]
+    public void Unknown_option_before_the_script_path_is_a_usage_error()
+    {
+        var error = Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["script", "--bogus", "run.lua"]));
+        Assert.Contains("script: missing <file.lua> path (or --eval <code>)", error.Message);
+    }
+
+    [Fact]
+    public void Unknown_option_after_the_send_payload_throws_usage_exception()
+    {
+        // slot taken: the parser keeps the line and reports the accurate token
+        var ex = Assert.Throws<UsageException>(() => CommandLine.Parse(["send", "reboot", "--bogus"]));
+        Assert.Contains("unknown option '--bogus'", ex.Message);
+    }
+
+    [Fact]
+    public void Send_keeps_taking_a_single_dash_version_flag_as_payload()
+    {
+        // the passthrough guard is only the help spellings; "-v" stays payload material
+        var command = Assert.IsType<SendCommand>(CommandLine.Parse(["send", "-v"]));
+        Assert.Equal("-v", command.Payload);
+    }
+
+    [Fact]
+    public void Version_is_not_a_send_option()
+    {
+        // --version is root-only; under send it counts as an unknown token in front of the
+        // empty payload slot, claimed exactly like "--bogus"
+        Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--version"]));
+        Assert.IsType<UsageErrorCommand>(CommandLine.Parse(["send", "--version", "reboot"]));
+    }
+
+    [Fact]
+    public void Help_beats_a_missing_send_payload()
+    {
+        Assert.IsType<HelpCommand>(CommandLine.Parse(["send", "--chip", "STM32H743XI", "--help"]));
+        Assert.IsType<HelpCommand>(CommandLine.Parse(["send", "--chip", "STM32H743XI", "-h"]));
+    }
+
+    [Fact]
+    public void Script_help_renders_its_own_page()
+    {
+        Assert.IsType<HelpCommand>(CommandLine.Parse(["script", "--help"]));
+    }
+
+    [Fact]
+    public void Eval_after_options_reports_the_parser_value_message()
+    {
+        // not the bare "--eval" shape (options carry values in front), so the parser owns it
+        var ex = Assert.Throws<UsageException>(() => CommandLine.Parse(["script", "--chip", "STM32H743XI", "--eval"]));
+        Assert.Contains("--eval: missing lua code value", ex.Message);
     }
 
     [Fact]

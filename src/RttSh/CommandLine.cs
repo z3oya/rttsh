@@ -100,13 +100,16 @@ internal sealed record UsageErrorCommand(string Message) : RttCommand;
 
 /// <summary>System.CommandLine parses; Parse maps the ParseResult onto the RttCommand union.
 /// Pure function of string[] (the test seam). Only this file and CliSpec.cs know the library;
-/// the first-token pre-checks below keep the old usage messages and the old
-/// return-UsageErrorCommand-vs-throw-UsageException split that the tests pin down.</summary>
+/// the pre-checks below keep the old usage messages and the old
+/// return-UsageErrorCommand-vs-throw-UsageException split that the tests pin down - they scan
+/// the whole line for it, never just the first token after the subcommand.</summary>
 internal static class CommandLine
 {
-    /// <summary>Bare-flash wording, shared by the args[0] pre-check and the parse-level
-    /// mapping (the backstop) so the two cannot drift.</summary>
+    /// <summary>Legacy wording, shared by the args[0] pre-checks and the parse-level mapping
+    /// (the backstop) so the two cannot drift.</summary>
     private const string FlashMissingSubcommand = "flash: missing subcommand - use 'flash download <file>' or 'flash erase'";
+    private const string SendMissingPayload = "send: missing <text> payload";
+    private const string ScriptMissingPath = "script: missing <file.lua> path (or --eval <code>)";
 
     public static RttCommand Parse(string[] args)
     {
@@ -120,25 +123,41 @@ internal static class CommandLine
             }
         }
 
-        // legacy first-token pre-checks, message for message; they claim only "--" tokens
-        // (payloads/paths may start with a single dash), and help spellings pass through so
-        // "send --help" renders the subcommand help instead of the old usage error
-        if (args.Length > 0 && args[0] == "send"
-            && (args.Length < 2 || IsNonHelpOption(args[1])))
-            return new UsageErrorCommand("send: missing <text> payload");
+        Spec spec = CliSpec.Build();
+
+        // legacy pre-checks for the payload/path-bearing commands, message for message. Like
+        // the flash branch below they scan the whole line - options may sit anywhere, before
+        // or after the payload/path - and they only claim lines that carry no help spelling,
+        // so "send --help" renders the subcommand help instead of the old usage error
+        if (args.Length > 0 && args[0] == "send" && !HasHelpPassthrough(args))
+        {
+            (bool slidingUnknown, bool hasCandidate) = ScanPositional(spec, args, evalKnown: false);
+            if (slidingUnknown || !hasCandidate)
+                return new UsageErrorCommand(SendMissingPayload);
+        }
         if (args.Length > 0 && args[0] == "script")
         {
             if (Array.IndexOf(args, "--manual") >= 0)   // retired flag: point at its replacement
                 return new UsageErrorCommand("script: --manual was removed; run 'rttsh manual'");
-            if (args.Length >= 2 && args[1] == "--eval")
+            if (!HasHelpPassthrough(args))
             {
-                if (args.Length < 3)
-                    return new UsageErrorCommand("script: --eval needs the lua source text");
-                // else: fall through - the parser validates the remaining tokens
-            }
-            else if (args.Length < 2 || IsNonHelpOption(args[1]))
-            {
-                return new UsageErrorCommand("script: missing <file.lua> path (or --eval <code>)");
+                (bool slidingUnknown, bool hasCandidate) = ScanPositional(spec, args, evalKnown: true);
+                if (slidingUnknown)
+                    return new UsageErrorCommand(ScriptMissingPath);
+                int eval = IndexOfEvalToken(args);
+                if (eval >= 0)
+                {
+                    // bare "--eval" with nothing but options around it: the old parser's
+                    // missing-value message. Every other eval shape ("--eval=code" spelled
+                    // values included) falls through - the parser owns the missing-value
+                    // wording there, the mapping layer the path+eval conflict
+                    if (args[eval] == "--eval" && eval == args.Length - 1 && !HasNonOptionTokenAfter(args, 0))
+                        return new UsageErrorCommand("script: --eval needs the lua source text");
+                }
+                else if (!hasCandidate)
+                {
+                    return new UsageErrorCommand(ScriptMissingPath);
+                }
             }
         }
 
@@ -157,7 +176,6 @@ internal static class CommandLine
         }
 
         // parse-only: the library reports problems via ParseResult.Errors and prints nothing
-        Spec spec = CliSpec.Build();
         ParseResult parsed = spec.Root.Parse(args);
 
         // help/version beat parse errors. Wider than the old switch, which only honored
@@ -178,14 +196,24 @@ internal static class CommandLine
         CommandLineOptions options = BuildOptions(parsed, spec);
         Command command = parsed.CommandResult.Command;
         if (command == spec.Send)
-            return new SendCommand(parsed.GetValue(spec.Payload)!, options);
+        {
+            // payload is parse-level optional; the backstop carries the legacy wording for
+            // shapes the args[0] pre-check cannot see ("--chip STM32H743XI send", "send --")
+            // and for candidates swallowed by an option value
+            string? payload = parsed.GetValue(spec.Payload);
+            return payload is null
+                ? new UsageErrorCommand(SendMissingPayload)
+                : new SendCommand(payload, options);
+        }
         if (command == spec.Script)
         {
             string? path = parsed.GetValue(spec.ScriptFile);
             string? eval = parsed.GetValue(spec.Eval);
             if (eval is not null && path is not null)
                 throw new UsageException($"script: --eval cannot be combined with a script file ('{path}')");
-            return new ScriptCommand(path, eval, options);
+            return path is null && eval is null
+                ? new UsageErrorCommand(ScriptMissingPath)
+                : new ScriptCommand(path, eval, options);
         }
         if (command == spec.ListDevices)
             return new ListDevicesCommand(options);
@@ -200,13 +228,73 @@ internal static class CommandLine
         return new MonitorCommand(options);   // no subcommand = default monitor
     }
 
-    /// <summary>An option-looking token the pre-checks must not claim: anything starting
-    /// with "--" except the help spellings (they fall through to the parser) and the bare
-    /// "--" end-of-options separator (the library consumes it, so "send -- -5" sends "-5").
-    /// Single-dash tokens stay payload/path material, as in the old parser ("send -5",
-    /// "script -x.lua"); "-h" after send/script renders that subcommand's help.</summary>
-    private static bool IsNonHelpOption(string arg) =>
-        arg.StartsWith("--") && arg is not ("--help" or "--");
+    /// <summary>Spellings the send/script pre-checks must not claim a line over: the help
+    /// spellings render the subcommand's help from the parser, and the bare "--" separator
+    /// means what follows is payload/path material ("send -- --value" has no other non-dash
+    /// token). Deliberately narrower than flash's HasPassthroughToken below: --version/-v are
+    /// root-only, so under send/script a "--version" token is unknown material for
+    /// ScanPositional, and single-dash tokens ("-v", "-5") stay payload/path material, as
+    /// everywhere else. ScanPositional is only called on lines this guard let through, so
+    /// the spellings live in this one list.</summary>
+    private static bool HasHelpPassthrough(string[] args)
+    {
+        foreach (string arg in args)
+        {
+            if (arg is "--help" or "-h" or "--") return true;
+        }
+        return false;
+    }
+
+    /// <summary>Whole-line scan (index 1 on, past the subcommand) for the send/script
+    /// pre-checks: whether the payload/path slot is taken - the first unconsumed token that
+    /// does not start with "--" - and whether an unknown "--" token sits in front of it. Such
+    /// a token would slide into the still-empty slot at parse time (for send: a typo silently
+    /// sent to the firmware), so the caller must claim the line; after the slot is taken the
+    /// parser instead reports the accurate unknown option. Only called on lines
+    /// HasHelpPassthrough let through: the help spellings and the bare "--" separator are the
+    /// guard's job and never appear here. Known value options swallow the token that follows
+    /// them - System.CommandLine takes it as the value even when it starts with a dash -
+    /// while flags and "--opt=value" spellings swallow nothing. "--eval" counts as known only
+    /// in the script branch (evalKnown); --version is root-only and deliberately unknown
+    /// here; single-dash tokens are positional material and never enter this judgment.</summary>
+    private static (bool SlidingUnknown, bool HasCandidate) ScanPositional(Spec spec, string[] args, bool evalKnown)
+    {
+        bool candidate = false;
+        for (int i = 1; i < args.Length; i++)
+        {
+            string arg = args[i];
+            if (!arg.StartsWith("--"))
+            {
+                candidate = true;
+                continue;
+            }
+            int eq = arg.IndexOf('=');
+            string name = eq > 0 ? arg[..eq] : arg;
+            Option? option = evalKnown && name == "--eval" ? spec.Eval : spec.FindOption(name);
+            if (option is null)
+            {
+                if (!candidate)
+                    return (SlidingUnknown: true, HasCandidate: false);
+                continue;   // slot taken: the parser reports the accurate unknown option
+            }
+            if (option.Arity.Equals(ArgumentArity.Zero) || eq > 0)
+                continue;   // flag, or the value is embedded after '='
+            if (i + 1 < args.Length)
+                i++;   // value option: what follows is its value, not the positional candidate
+        }
+        return (SlidingUnknown: false, candidate);
+    }
+
+    /// <summary>First index of an "--eval"/"--eval=code" token, either spelling; -1 when none.</summary>
+    private static int IndexOfEvalToken(string[] args)
+    {
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i] == "--eval" || args[i].StartsWith("--eval=", StringComparison.Ordinal))
+                return i;
+        }
+        return -1;
+    }
 
     /// <summary>Tokens the flash pre-checks must not claim: help/version spellings render
     /// their own output from the parser, and the bare "--" end-of-options separator is
@@ -225,7 +313,8 @@ internal static class CommandLine
 
     /// <summary>True when a non-option token follows the one at <paramref name="index"/>:
     /// for `flash download` that token can be the image path (or an option's value - a wrong
-    /// guess only falls through to the parser, which knows the difference). Single-dash
+    /// guess only falls through to the parser, which knows the difference); with index 0 it
+    /// doubles as the whole-line test behind the bare "--eval" pre-check. Single-dash
     /// tokens stay path material, as everywhere else.</summary>
     private static bool HasNonOptionTokenAfter(string[] args, int index)
     {

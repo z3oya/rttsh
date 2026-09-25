@@ -52,7 +52,7 @@ rttsh send "led r on" --chip STM32H743XI --wait 300
 rttsh send "6c 65 64 20 67 20 6f 6e 0a" --hex --chip STM32H743XI --wait 300   # 原始字节 "led g on\n"
 ```
 
-载荷必须紧跟子命令，选项放在载荷之后；发送 `--` 开头的内容用 `send -- --value`，详见 `rttsh send --help`。
+载荷与选项的先后顺序不限；发送 `--` 开头的内容用 `send -- --value`，详见 `rttsh send --help`。
 
 ### 3. 交互监控
 
