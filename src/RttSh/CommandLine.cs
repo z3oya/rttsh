@@ -56,13 +56,22 @@ internal sealed class CommandLineOptions
     /// <summary>Encoding for both directions unless --encoding narrowed it (utf8 default).</summary>
     public TextEncodingKind EffectiveEncoding => Encoding ?? TextEncodingKind.Utf8;
 
+    /// <summary>Fails fast when no chip is known: Program.Run calls this at dispatch time,
+    /// right after the config merge and before any session work (an ELF parse, a log file,
+    /// flash erase's confirmation prompt must not run first). The session-internal
+    /// ToConnectionConfig check below stays as the backstop; the wording lives here only.</summary>
+    public void EnsureChip()
+    {
+        if (Chip.Length == 0)
+            throw new UsageException("missing required option --chip <device> (see rttsh list-devices, or set 'chip' in .rttsh/config.json)");
+    }
+
     /// <summary>Builds the transport config from the parsed options; requires --chip.
     /// Non-trivial defaults (speed, interface) come from the record's own constants so they
     /// live in exactly one place; zero-valued options fall through to the record defaults.</summary>
     public RttConnectionConfig ToConnectionConfig(bool resetDefault)
     {
-        if (Chip.Length == 0)
-            throw new UsageException("missing required option --chip <device> (see rttsh list-devices, or set 'chip' in .rttsh/config.json)");
+        EnsureChip();
         int channel = Channel ?? 0;
         if (channel is < 0 or > RttConnectionConfig.MaxChannel)
             throw new UsageException($"--channel: expected 0-{RttConnectionConfig.MaxChannel}, got {Channel}");

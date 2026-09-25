@@ -39,22 +39,27 @@ internal static class Program
         // --help down). -C/--root applies first (it moves the working directory the config
         // pickup and the cache home hang off), --elf resolves right after the config merge
         // (it must see the merged rttAddr/rttRange to honor precedence) and only for the
-        // connection commands - list-devices never opens a link.
+        // connection commands - list-devices never opens a link. The hardware commands fail
+        // fast on a missing chip between the merge and any session work (no ELF parse, no log
+        // file, no erase prompt before the chip is known).
         switch (command)
         {
             case MonitorCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                c.Options.EnsureChip();
                 ElfResolver.Apply(c.Options);
                 break;
             case SendCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                c.Options.EnsureChip();
                 ElfResolver.Apply(c.Options);
                 break;
             case ScriptCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                c.Options.EnsureChip();
                 ElfResolver.Apply(c.Options);
                 break;
             case ListDevicesCommand c:
@@ -64,6 +69,7 @@ internal static class Program
             case FlashCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                c.Options.EnsureChip();
                 break;
         }
 

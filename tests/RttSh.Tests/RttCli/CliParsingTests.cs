@@ -417,4 +417,19 @@ public class CliParsingTests
     {
         Assert.Throws<UsageException>(() => CommandLine.Parse(["--chip", "X", "--channel"]));
     }
+
+    [Fact]
+    public void EnsureChip_fails_fast_without_a_chip()
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse([]));
+        var ex = Assert.Throws<UsageException>(command.Options.EnsureChip);
+        Assert.Contains("--chip", ex.Message);
+    }
+
+    [Fact]
+    public void EnsureChip_passes_with_a_chip()
+    {
+        var command = Assert.IsType<MonitorCommand>(CommandLine.Parse(["--chip", "STM32H743XI"]));
+        command.Options.EnsureChip();   // must not throw
+    }
 }
