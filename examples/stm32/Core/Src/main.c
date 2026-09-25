@@ -130,6 +130,7 @@ static bool     s_cr_last;                  /* true = last byte was a submit CR:
 static bool     s_tick_enabled = false;      /* quiet by default; enable with 'tick on' */
 static uint32_t s_seconds;    /* uptime counter for the tick print */
 static uint32_t s_tick_ref;   /* HAL_GetTick() snapshot of the last 1 s expiry */
+static volatile uint32_t s_boot_mark = 0x31415926u;   /* build marker: debugger-visible via rtt.mem_read */
 static rtt_async_slot_t s_async[RTT_ASYNC_SLOT_COUNT];   /* [SLOT_1]=async1, [SLOT_2]=async2 */
 static const char * const s_async_name[RTT_ASYNC_SLOT_COUNT] = {"async1", "async2"};
 /* USER CODE END PV */
@@ -189,6 +190,7 @@ int main(void)
   SEGGER_RTT_printf(0, "\r\n=== basic-jlink-rtt : RTT ===\r\n");
   SEGGER_RTT_printf(0, "RTT channel 0 ready. Output also mirrored on USART1.\r\n");
   s_tick_ref = HAL_GetTick();
+  (void)s_boot_mark;   /* volatile read: pins the marker in the image so rtt.mem_read can see it */
   SEGGER_RTT_printf(0, "Type 'help' for commands.\r\n");
   SEGGER_RTT_printf(0, RTT_PROMPT);
   /* USER CODE END 2 */
