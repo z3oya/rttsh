@@ -37,39 +37,29 @@ internal static class Program
         // Config-file defaults land before dispatch, so a config error beats per-command usage
         // validation; help/version/manual stay config-free (a broken config file must not take
         // --help down). -C/--root applies first (it moves the working directory the config
-        // pickup and the cache home hang off), --elf resolves right after the config merge
-        // (it must see the merged rttAddr/rttRange to honor precedence) and only for the
-        // connection commands - list-devices never opens a link. The hardware commands fail
-        // fast on a missing chip between the merge and any session work (no ELF parse, no log
-        // file, no erase prompt before the chip is known).
+        // pickup and the cache home hang off), and list-devices gets only that - it never opens
+        // a link. The hardware commands share PrepareHardwareOptions: the chip checks fail fast
+        // between the merge and any session work (no ELF parse, no log file, no erase prompt
+        // before the chip is present and a name the DLL device database actually knows),
+        // and --elf resolves after them (it must see the merged rttAddr/rttRange to honor
+        // precedence).
         switch (command)
         {
             case MonitorCommand c:
-                RttRoot.Apply(c.Options);
-                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
-                c.Options.EnsureChip();
-                ElfResolver.Apply(c.Options);
+                PrepareHardwareOptions(c.Options, resolveElf: true);
                 break;
             case SendCommand c:
-                RttRoot.Apply(c.Options);
-                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
-                c.Options.EnsureChip();
-                ElfResolver.Apply(c.Options);
+                PrepareHardwareOptions(c.Options, resolveElf: true);
                 break;
             case ScriptCommand c:
-                RttRoot.Apply(c.Options);
-                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
-                c.Options.EnsureChip();
-                ElfResolver.Apply(c.Options);
+                PrepareHardwareOptions(c.Options, resolveElf: true);
                 break;
             case ListDevicesCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
                 break;
             case FlashCommand c:
-                RttRoot.Apply(c.Options);
-                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
-                c.Options.EnsureChip();
+                PrepareHardwareOptions(c.Options, resolveElf: false);
                 break;
         }
 
@@ -87,6 +77,21 @@ internal static class Program
             FlashEraseCommand c => FlashOnce.RunErase(c),
             _ => UsageError("internal: unhandled command"),
         };
+    }
+
+    /// <summary>The shared pre-dispatch preamble of the hardware commands (monitor, send, script,
+    /// flash): root, config merge, then the two chip gates - EnsureChip for presence,
+    /// ChipValidation.EnsureKnown for membership in the DLL device database (an unknown name
+    /// would otherwise reach ExecCommand and open the DLL's modal device-selection dialog) -
+    /// and, for the three RTT commands, the --elf resolution last.</summary>
+    private static void PrepareHardwareOptions(CommandLineOptions options, bool resolveElf)
+    {
+        RttRoot.Apply(options);
+        ConfigFile.ApplyTo(options, options.ConfigPath);
+        options.EnsureChip();
+        ChipValidation.EnsureKnown(options);
+        if (resolveElf)
+            ElfResolver.Apply(options);
     }
 
     private static int PrintManual()

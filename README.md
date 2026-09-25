@@ -43,6 +43,8 @@ t01 PASS (id=43)
 rttsh list-devices --filter H743
 ```
 
+rttsh 启动时会把 `--chip` 与设备库精确匹配（忽略大小写）：名称不在库中会直接报错退出（exit 2），不会触发 J-Link DLL 的设备选择弹窗。
+
 ### 2. 单发命令，接收应答
 
 ```bash

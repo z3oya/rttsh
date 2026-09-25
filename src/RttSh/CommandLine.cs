@@ -58,7 +58,8 @@ internal sealed class CommandLineOptions
 
     /// <summary>Fails fast when no chip is known: Program.Run calls this at dispatch time,
     /// right after the config merge and before any session work (an ELF parse, a log file,
-    /// flash erase's confirmation prompt must not run first). The session-internal
+    /// flash erase's confirmation prompt must not run first). ChipValidation.EnsureKnown
+    /// follows with the membership check against the DLL device database. The session-internal
     /// ToConnectionConfig check below stays as the backstop; the wording lives here only.</summary>
     public void EnsureChip()
     {

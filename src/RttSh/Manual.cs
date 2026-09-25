@@ -47,7 +47,9 @@ internal static class Manual
         mirror the CLI options in camelCase - "interface" is what --help
         spells --if:
 
-          chip           device name exactly as list-devices prints it
+          chip           device name exactly as list-devices prints it;
+                         checked against the device database before any
+                         session work - an unknown name exits 2 up front
           speed          interface speed in kHz (default 4000)
           interface      "swd" | "jtag"
           rttAddr        control-block address, hex string "0x..."
