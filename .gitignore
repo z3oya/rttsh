@@ -484,3 +484,8 @@ $RECYCLE.BIN/
 .zcode/plans/
 
 docs/references
+
+# ZCode working docs
+.zcodeignore
+docs/plans/
+docs/research/
