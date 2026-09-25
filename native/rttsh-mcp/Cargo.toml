@@ -1,0 +1,13 @@
+[package]
+name = "rttsh-mcp"
+version.workspace = true
+edition.workspace = true
+
+# The lib name becomes the cdylib file name (rttsh_mcp_native.dll) — keep it in sync
+# with the C# side (McpNative.Library) and the BuildRttshNative MSBuild target.
+[lib]
+name = "rttsh_mcp_native"
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true

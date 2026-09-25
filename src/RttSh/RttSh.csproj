@@ -9,7 +9,30 @@
     <RootNamespace>Toolbox.Tools.RttCli</RootNamespace>
     <!-- The tool's own release version, shown by the version flag. -->
     <Version>0.3.2</Version>
+    <!-- McpNative's function-pointer ABI and the UnmanagedCallersOnly trampoline. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
+
+  <!-- Builds the Rust glue crate (native/) and ships rttsh_mcp_native.dll flat next to
+       the managed output, like lua54.dll. Inputs/Outputs let MSBuild skip cargo entirely
+       when the DLL is newer than every Rust source. Escape hatch: -p:RttshSkipNative=true. -->
+  <ItemGroup>
+    <RttshNativeSources Include="$(RttshNativeDir)rttsh-mcp\src\**\*.rs" />
+    <Content Include="$(RttshNativeDll)"
+             Link="rttsh_mcp_native.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+  <Target Name="BuildRttshNative"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(OS)' == 'Windows_NT' and '$(RttshSkipNative)' != 'true'"
+          Inputs="$(RttshNativeDir)Cargo.toml;$(RttshNativeDir)Cargo.lock;@(RttshNativeSources)"
+          Outputs="$(RttshNativeDll)">
+    <Exec Command="cargo build --release --manifest-path &quot;$(RttshNativeDir)Cargo.toml&quot;" />
+    <ItemGroup>
+      <FileWrites Include="$(RttshNativeDll)" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <ProjectReference Include="..\RttSh.Core\RttSh.Core.csproj" />

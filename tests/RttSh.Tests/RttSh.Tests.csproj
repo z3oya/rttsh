@@ -23,4 +23,14 @@
     <ProjectReference Include="..\..\src\RttSh\RttSh.csproj" />
   </ItemGroup>
 
+  <!-- Built by RttSh's BuildRttshNative target (a ProjectReference, so it always runs
+       first); copied in directly because a dynamic Content item there would not flow
+       transitively to referencing projects. -->
+  <ItemGroup>
+    <Content Include="$(RttshNativeDll)"
+             Link="rttsh_mcp_native.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Visible="false" />
+  </ItemGroup>
+
 </Project>

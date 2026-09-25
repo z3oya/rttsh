@@ -1,0 +1,5 @@
+# Statically link the CRT into the cdylib (validated in the C#↔Rust interop study):
+# the DLL then depends on KERNEL32.dll only — no VC++ Redistributable on host machines.
+# Linux keeps the default dynamic glibc linking.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["rttsh-mcp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+
+[profile.release]
+strip = true
+lto = "thin"
+
+[workspace.lints.rust]
+# Unsafe operations inside unsafe fns must carry their own unsafe block, so the
+# boundary between "unsafe because FFI" and "unsafe because pointer deref" stays visible.
+unsafe_op_in_unsafe_fn = "deny"
