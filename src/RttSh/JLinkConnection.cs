@@ -4,9 +4,11 @@ using RttSh.Core.Rtt;
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>Shared J-Link connection sequence: probe select, DLL open, target connect, optional
-/// reset+resume - plus the RTT native-call facade (RttStart/RttStop/RttRead/RttWrite/ReadMemory/
-/// IsHalted), so the raw JLinkLibrary stays private and every DLL call funnels through this class.
-/// RTT START is deliberately NOT part of Open - only the transport starts RTT.
+/// reset+resume - plus the native-call facade (RTT: RttStart/RttStop/RttRead/RttWrite/ReadMemory/
+/// IsHalted; memory/core: WriteMemory/ReadMemory(width)/Halt/Resume; flash: SetFlashProgressCallback/
+/// DownloadFile/EraseChip), so the raw JLinkLibrary stays private and every DLL call funnels through
+/// this class. RTT START is deliberately NOT part of Open - only the transport starts RTT, which is
+/// what lets the flash commands run against the same connection without a link.
 /// Threading: the DLL is not thread-safe; the owner serializes all native calls. The log/error
 /// thunks are instance fields to keep them alive for the DLL's lifetime.
 /// The owner must call Open/Close/Dispose under the same lock that serializes the facade calls; the class
@@ -16,6 +18,7 @@ internal sealed class JLinkConnection : IDisposable
     private readonly JLinkLibrary _lib = new();
     private JLinkNative.LogFn? _logThunk;
     private JLinkNative.LogFn? _errorThunk;
+    private JLinkNative.FlashProgressFn? _progressThunk;   // native callback keep-alive (see SetFlashProgressCallback)
     private bool _open;
 
     private JLinkLibrary Library => _lib;
@@ -70,16 +73,7 @@ internal sealed class JLinkConnection : IDisposable
                 throw new IOException($"Failed to connect target (chip={config.Chip}).");
 
             if (config.ResetOnConnect)
-            {
-                _lib.Reset!();
-                // J-Link resets halt the core (vector catch: "Halt core after reset"). Resume it
-                // so the firmware actually runs - a halted CPU produces no traffic at all.
-                if (_lib.IsHalted?.Invoke() == 1)
-                {
-                    OnLog("Core is halted after reset - resuming via Go().", isError: false);
-                    _lib.Go?.Invoke();
-                }
-            }
+                ResetAndResume();
         }
         catch
         {
@@ -106,13 +100,16 @@ internal sealed class JLinkConnection : IDisposable
         _lib.Dispose();   // frees the DLL
         _logThunk = null;
         _errorThunk = null;
+        _progressThunk = null;
     }
 
     // ---- native-call facade -----------------------------------------------------------------
     // Every DLL call the transport makes funnels through these forwarders so the raw library
     // stays private. Pure forwarding - no locking (the owner's _nativeLock serializes everything,
-    // including Open/Close/Dispose) and no open guard (the owner checks). RttStop/IsHalted stay
-    // null-defensive (?.), the rest assume the export resolved (!).
+    // including Open/Close/Dispose) and no open guard (the owner checks). Null handling follows
+    // the export's age: RttStop/IsHalted stay null-defensive (?.), the original connect-path
+    // exports assume the export resolved (!), and the optional feature exports (Halt/
+    // WriteMemory/SetFlashProgressCallback/DownloadFile/EraseChip) check-and-throw on absence.
 
     /// <summary>JLINK_RTTERMINAL(START). The config marshals as a ref struct; passing it by value
     /// copies the block once - the native layout is unchanged.</summary>
@@ -132,6 +129,107 @@ internal sealed class JLinkConnection : IDisposable
 
     /// <summary>JLINKARM_IsHalted; false when the export is missing (defensive, as before).</summary>
     public bool IsHalted() => Library.IsHalted?.Invoke() == 1;
+
+    /// <summary>Resets the target and leaves the core halted (J-Link resets halt via vector
+    /// catch) - the state J-Link Commander's erase creates with its "implicit reset &amp; halt".
+    /// A plain halt is not enough: on-target testing found the DLL's erase paths silently
+    /// no-op while the core had been executing from the bank. Throws when the core did not
+    /// end up halted, so a failed preparation is loud instead of a silent no-op erase.</summary>
+    public void ResetHalt()
+    {
+        _lib.Reset!();
+        if (!IsHalted())
+            throw new IOException("Core did not halt after reset - refusing to run destructive flash work in this state.");
+    }
+
+    /// <summary>Resets the target and resumes a core the reset left halted (J-Link resets halt via
+    /// vector catch - a halted CPU produces no traffic at all). Shared by the connect path and
+    /// flash's --reset, which want the exact same sequence and log line.</summary>
+    public void ResetAndResume()
+    {
+        _lib.Reset!();
+        if (IsHalted())
+        {
+            OnLog("Core is halted after reset - resuming via Go().", isError: false);
+            _lib.Go?.Invoke();
+        }
+    }
+
+    /// <summary>JLINKARM_Halt. Throws with the code + table wording on failure; throws when the
+    /// export is missing (optional export - an old DLL still serves plain RTT).</summary>
+    public void Halt()
+    {
+        if (Library.Halt is not { } halt)
+            throw new IOException("This J-Link DLL lacks JLINKARM_Halt (a very old version?); the core cannot be halted.");
+        int code = halt();
+        if (code < 0)
+            throw new IOException($"JLINKARM_Halt failed (code={code}: {JLinkErrors.Describe(code)}).");
+    }
+
+    /// <summary>Resumes a halted core (JLINKARM_Go; its return value is unused - ABI-safe).</summary>
+    public void Resume() => Library.Go?.Invoke();
+
+    /// <summary>JLINKARM_ReadMemEx with an explicit access width (bytes: 1/2/4). Negative return
+    /// is the DLL's error code - the caller maps it through JLinkErrors with its own context.</summary>
+    public int ReadMemory(uint address, uint numBytes, byte[] buffer, uint access) =>
+        Library.ReadMemEx!(address, numBytes, buffer, access);
+
+    /// <summary>JLINKARM_WriteMemEx: numBytes is total bytes, access the unit width in bytes
+    /// (1/2/4); returns units written, negative = error code for the caller to map.</summary>
+    public int WriteMemory(uint address, uint numBytes, byte[] buffer, uint access)
+    {
+        if (Library.WriteMemEx is not { } write)
+            throw new IOException("This J-Link DLL lacks JLINKARM_WriteMemEx (a very old version?); memory writes are unavailable.");
+        return write(address, numBytes, buffer, access);
+    }
+
+    /// <summary>Installs (or clears, with null) the flash progress callback. The delegate is kept
+    /// in a field for the DLL's lifetime - a collected thunk would crash inside a native frame.</summary>
+    public void SetFlashProgressCallback(JLinkNative.FlashProgressFn? callback)
+    {
+        if (Library.SetFlashProgProgressCallback is not { } set)
+            throw new IOException("This J-Link DLL lacks JLINK_SetFlashProgProgressCallback (a very old version?); flash progress is unavailable.");
+        _progressThunk = callback;
+        set(callback);
+    }
+
+    /// <summary>JLINK_DownloadFile: erase+program+verify from an image file inside the DLL
+    /// (hex/elf/mot carry their own addresses; address is only used for raw binary).</summary>
+    public int DownloadFile(string path, uint address)
+    {
+        if (Library.DownloadFile is not { } download)
+            throw new IOException("This J-Link DLL lacks JLINK_DownloadFile (a very old version?); flash download is unavailable.");
+        return download(path, address);
+    }
+
+    /// <summary>Erases the whole chip's flash: ExecCommand("EnableEraseAllFlashBanks") +
+    /// JLINK_EraseChip, after a reset-halt (FlashOnce does the reset-halt). All three steps are
+    /// on-target findings (STM32H743 + DLL v7.98a): without the flag, JLINK_EraseChip is a
+    /// silent no-op here - returns 0, never fires the progress callback, content untouched
+    /// (J-Link Commander's own erase command no-ops the same way); ExecCommand("erase") is not
+    /// an alternative (returns OK with "ERROR: Unknown command" in its buffer); and the core
+    /// must be reset-halted, not just running. With the flag the erase really runs - seconds
+    /// for the programmed bank, minutes for the whole 2MB. The Unknown-command trap is also
+    /// why this method treats a non-empty ExecCommand buffer as failure even on a non-negative
+    /// return code: on this path the return value alone has a history of reporting success
+    /// for work that never happened.</summary>
+    public void EraseChip()
+    {
+        var error = new byte[256];
+        int flag = Library.ExecCommand!("EnableEraseAllFlashBanks", error, error.Length);
+        // The return code is not a reliable error channel: an unrecognized command returns OK
+        // with "ERROR: Unknown command" in the buffer (same check as Open's device = path) -
+        // and JLINK_EraseChip silently no-ops without the flag actually being set.
+        string message = JLinkLibrary.TrimAtNul(error);
+        if (flag < 0 || message.Length > 0)
+            throw new IOException($"ExecCommand(EnableEraseAllFlashBanks) failed (code={flag}{(message.Length > 0 ? $", {message}" : "")}).");
+
+        if (Library.EraseChip is not { } erase)
+            throw new IOException("This J-Link DLL lacks JLINK_EraseChip (a very old version?); chip erase is unavailable.");
+        int erased = erase();
+        if (erased < 0)
+            throw new IOException($"JLINK_EraseChip failed (code={erased}: {JLinkErrors.Describe(erased)}).");
+    }
 
     private void OnDllLog(string message) => OnLog(message, isError: false);
     private void OnDllError(string message) => OnLog(message, isError: true);

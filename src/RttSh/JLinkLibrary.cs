@@ -32,10 +32,17 @@ internal sealed class JLinkLibrary : IDisposable
     public JLinkNative.RttControlStopFn? RttControlStop { get; private set; }
     public JLinkNative.RttReadFn? RttRead { get; private set; }
     public JLinkNative.RttWriteFn? RttWrite { get; private set; }
+    /// <summary>Optional exports (resolved optional in TryLoadFrom; an old DLL must still
+    /// connect for plain RTT, and the mem_*/flash features report their absence per call).</summary>
     public JLinkNative.DeviceGetInfoCountFn? DeviceGetInfoCount { get; private set; }
     public JLinkNative.DeviceGetInfoFn? DeviceGetInfo { get; private set; }
     public JLinkNative.Core2CoreNameFn? Core2CoreName { get; private set; }
     public JLinkNative.GetDllVersionFn? GetDllVersion { get; private set; }
+    public JLinkNative.HaltFn? Halt { get; private set; }
+    public JLinkNative.WriteMemExFn? WriteMemEx { get; private set; }
+    public JLinkNative.DownloadFileFn? DownloadFile { get; private set; }
+    public JLinkNative.EraseChipFn? EraseChip { get; private set; }
+    public JLinkNative.SetFlashProgProgressCallbackFn? SetFlashProgProgressCallback { get; private set; }
 
     /// <summary>Full path of the DLL file that was actually loaded; empty until a Load succeeds.
     /// Every candidate kind is resolved through the loaded module (see ResolveLoadedPath), so a
@@ -89,6 +96,8 @@ internal sealed class JLinkLibrary : IDisposable
         RttControlStart = null; RttControlStop = null; RttRead = null; RttWrite = null;
         DeviceGetInfoCount = null; DeviceGetInfo = null; Core2CoreName = null;
         GetDllVersion = null;
+        Halt = null; WriteMemEx = null; DownloadFile = null; EraseChip = null;
+        SetFlashProgProgressCallback = null;
         LoadedPath = "";
     }
 
@@ -144,6 +153,11 @@ internal sealed class JLinkLibrary : IDisposable
         DeviceGetInfo = ResolveOptional<JLinkNative.DeviceGetInfoFn>(JLinkNative.DeviceGetInfo);
         Core2CoreName = ResolveOptional<JLinkNative.Core2CoreNameFn>(JLinkNative.Core2CoreName);
         GetDllVersion = ResolveOptional<JLinkNative.GetDllVersionFn>(JLinkNative.GetDllVersion);
+        Halt = ResolveOptional<JLinkNative.HaltFn>(JLinkNative.Halt);
+        WriteMemEx = ResolveOptional<JLinkNative.WriteMemExFn>(JLinkNative.WriteMemEx);
+        DownloadFile = ResolveOptional<JLinkNative.DownloadFileFn>(JLinkNative.DownloadFile);
+        EraseChip = ResolveOptional<JLinkNative.EraseChipFn>(JLinkNative.EraseChip);
+        SetFlashProgProgressCallback = ResolveOptional<JLinkNative.SetFlashProgProgressCallbackFn>(JLinkNative.SetFlashProgProgressCallback);
         LoadedPath = ResolveLoadedPath(candidate);
         return true;
     }

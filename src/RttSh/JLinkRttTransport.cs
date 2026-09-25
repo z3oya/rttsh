@@ -5,14 +5,17 @@ namespace Toolbox.Tools.RttCli;
 /// <summary>IRttTransport over the SEGGER J-Link DLL (mirrors the reference rtt-t2 tool), reading
 /// and writing the RTT up/down channel pair selected by RttConnectionConfig.Channel (default 0).
 /// Every DLL call funnels through JLinkConnection's facade (it owns the raw JLinkLibrary); this
-/// class adds RTT START/STOP, the poll thread and the channel read/write paths.
+/// class adds RTT START/STOP, the poll thread and the channel read/write paths. It is also the
+/// ITargetMemory for the rtt.mem_*/halt scripting API: debugger-style access under the same
+/// _nativeLock, with Halt() suspending the poll loop's idle stalled-core detection until Resume() -
+/// a script-driven halt looks exactly like the dead-link stall that check exists to catch.
 ///
 /// Threading: the DLL is NOT thread-safe; every native call runs under _nativeLock. The poll thread
 /// owns the failure path: on a negative read it performs the DLL teardown itself and then raises
 /// Error - an external Close() that raced it just sees the link already closed (idempotent). Close()
 /// stops the poll thread by clearing _open, joins it OUTSIDE the lock (it may be inside a read),
 /// then tears down.</summary>
-internal sealed class JLinkRttTransport : IRttTransport
+internal sealed class JLinkRttTransport : IRttTransport, ITargetMemory
 {
     private const int PollBytes = 8192;
     private const int PollIdleMs = 2;
@@ -27,6 +30,10 @@ internal sealed class JLinkRttTransport : IRttTransport
     private readonly byte[] _rxBuffer = new byte[PollBytes];
     private Thread? _pollThread;
     private volatile bool _open;
+    /// <summary>A script called Halt() and has not Resume()d yet: the poll loop's idle
+    /// stalled-core check must stand down (the halt IS the reason for the silence), or the
+    /// halt → mem access → resume use case dies within ~2 s on a quiet link.</summary>
+    private volatile bool _scriptHalted;
 
     /// <summary>RTT up/down channel pair served by this transport; set from the config in Open().</summary>
     public int Channel { get; private set; }
@@ -146,9 +153,10 @@ internal sealed class JLinkRttTransport : IRttTransport
             {
                 idlePolls = 0;
                 // Only on quiet links, ~2 s apart at the idle cadence; IsHalted is a single DAP read.
+                // Suppressed while a script holds the core halted on purpose (rtt.halt()).
                 lock (_nativeLock)
                 {
-                    if (_open && _connection.IsHalted())
+                    if (_open && !_scriptHalted && _connection.IsHalted())
                     {
                         FailLink("RTT stalled: the target core is halted (debugger attached or reset left it halted). Reconnect with --reset to resume it.");
                         return;
@@ -226,20 +234,88 @@ internal sealed class JLinkRttTransport : IRttTransport
         }
     }
 
-    /// <summary>Idempotent. Clears the flag, joins the poll thread outside the lock (it may be inside a
-    /// read), then stops RTT and closes the DLL.</summary>
+    // ---- ITargetMemory: debugger-style access under the same native lock ---------------------
+    // Read/Write return the raw DLL code (negative = error; ScriptRuntime maps it with address
+    // context via JLinkErrors); Halt/Resume throw - ScriptSession surfaces them verbatim.
+
+    /// <inheritdoc />
+    public int ReadMemory(uint address, uint numBytes, byte[] buffer, uint access)
+    {
+        lock (_nativeLock)
+        {
+            if (!_open) throw new IOException("The RTT link is not open.");
+            return _connection.ReadMemory(address, numBytes, buffer, access);
+        }
+    }
+
+    /// <inheritdoc />
+    public int WriteMemory(uint address, uint numBytes, byte[] buffer, uint access)
+    {
+        lock (_nativeLock)
+        {
+            if (!_open) throw new IOException("The RTT link is not open.");
+            return _connection.WriteMemory(address, numBytes, buffer, access);
+        }
+    }
+
+    /// <inheritdoc />
+    public bool IsHalted()
+    {
+        lock (_nativeLock)
+        {
+            return _open && _connection.IsHalted();
+        }
+    }
+
+    /// <inheritdoc />
+    public void Halt()
+    {
+        lock (_nativeLock)
+        {
+            if (!_open) throw new IOException("The RTT link is not open.");
+            _connection.Halt();
+            _scriptHalted = true;   // the halt IS the reason for link silence - stand down the stall check
+        }
+    }
+
+    /// <inheritdoc />
+    public void Resume()
+    {
+        lock (_nativeLock)
+        {
+            if (!_open) throw new IOException("The RTT link is not open.");
+            _connection.Resume();
+            _scriptHalted = false;
+        }
+    }
+
+    /// <summary>Idempotent. If a script died between Halt() and Resume() (ScriptError, timeout,
+    /// Ctrl+C), the core would otherwise stay halted after the session - silently dead until the
+    /// next connect trips the stalled-core check - so a flagged Close does a best-effort resume
+    /// first. Then joins the poll thread outside the lock (it may be inside a read), stops RTT
+    /// and closes the DLL.</summary>
     public void Close()
     {
         Thread? thread;
+        bool scriptHalted;
         lock (_nativeLock)
         {
             if (!_open) return;
             _open = false;
+            scriptHalted = _scriptHalted;
+            _scriptHalted = false;
             thread = _pollThread;
         }
         thread?.Join();
         lock (_nativeLock)
         {
+            if (scriptHalted)
+            {
+                // The link is still open here, so Go reaches the core. Best effort only -
+                // teardown must proceed even when the resume cannot.
+                try { _connection.Resume(); }
+                catch { /* a dead link must not block the close */ }
+            }
             TeardownDll();
         }
     }
