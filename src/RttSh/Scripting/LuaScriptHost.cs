@@ -1,3 +1,4 @@
+using System.Globalization;
 using NLua;
 using NLua.Exceptions;   // LuaException/LuaScriptException live here in NLua 1.7.x
 
@@ -14,6 +15,13 @@ internal sealed class LuaScriptHost
     private readonly ScriptRuntime _runtime;
     private readonly string _source;
     private readonly string _chunkName;
+    /// <summary>The live Lua state while Run executes; only touched on the single script thread.
+    /// The mem API builds its result tables from this state.</summary>
+    private Lua? _state;
+
+    /// <summary>The state, or a loud failure when a HOST_* callback somehow runs outside Run -
+    /// the mem table builder needs the same state the script runs on.</summary>
+    private Lua State => _state ?? throw new InvalidOperationException("rtt.* called outside a running script host");
 
     public LuaScriptHost(ScriptRuntime runtime, string source, string chunkName)
     {
@@ -26,6 +34,7 @@ internal sealed class LuaScriptHost
     public int Run()
     {
         using var lua = new Lua();
+        _state = lua;
         lua.DoString("""
             local function protect(fn)
                 return function(...)
@@ -33,6 +42,11 @@ internal sealed class LuaScriptHost
                     if not ok then error(HOST_describe(res), 2) end
                     return res
                 end
+            end
+            local function floor_arg(v, message)
+                local n = tonumber(v)
+                if n == nil then error(message, 0) end
+                return math.floor(n)
             end
             rtt = {
                 send = protect(function(text) HOST_send(text) end),
@@ -53,6 +67,34 @@ internal sealed class LuaScriptHost
                 now = protect(function() return HOST_now() end),
                 sleep = protect(function(ms) HOST_sleep(math.floor(tonumber(ms) or 0)) end),
                 exit = function(code) HOST_exit(math.floor(tonumber(code) or 0)) end,
+                mem_read = protect(function(addr, count, width)
+                    if addr == nil then error('mem_read: missing address', 0) end
+                    if count == nil then error('mem_read: missing count', 0) end
+                    local w = width == nil and 32 or floor_arg(width, 'mem_read: width must be a number')
+                    return HOST_mem_read(floor_arg(addr, 'mem_read: address must be a number'),
+                                         floor_arg(count, 'mem_read: count must be a number'), w)
+                end),
+                mem_write = protect(function(addr, values, width)
+                    if addr == nil then error('mem_write: missing address', 0) end
+                    if values == nil then error('mem_write: missing value(s)', 0) end
+                    local a = floor_arg(addr, 'mem_write: address must be a number')
+                    local w = width == nil and 32 or floor_arg(width, 'mem_write: width must be a number')
+                    if type(values) == 'table' then
+                        local n = #values
+                        if n == 0 then return end
+                        local copy = {}
+                        for i = 1, n do
+                            local v = tonumber(values[i])
+                            if v == nil then error('mem_write: value #' .. i .. ' is not a number', 0) end
+                            copy[i] = math.floor(v)
+                        end
+                        return HOST_mem_write_table(a, copy, n, w)
+                    end
+                    return HOST_mem_write_one(a, floor_arg(values, 'mem_write: value must be a number or table'), w)
+                end),
+                is_halted = protect(function() return HOST_is_halted() end),
+                halt = protect(function() HOST_halt() end),
+                resume = protect(function() HOST_resume() end),
             }
             """);
         lua["HOST_send"] = new Action<string>(_runtime.Send);
@@ -64,6 +106,12 @@ internal sealed class LuaScriptHost
         lua["HOST_now"] = new Func<double>(_runtime.Now);
         lua["HOST_sleep"] = new Action<int>(_runtime.Sleep);
         lua["HOST_exit"] = new Action<int>(_runtime.Exit);
+        lua["HOST_mem_read"] = new Func<long, long, int, LuaTable>(MemRead);
+        lua["HOST_mem_write_one"] = new Action<long, long, int>(MemWriteOne);
+        lua["HOST_mem_write_table"] = new Action<long, LuaTable, long, int>(MemWriteTable);
+        lua["HOST_is_halted"] = new Func<bool>(_runtime.IsHalted);
+        lua["HOST_halt"] = new Action(_runtime.Halt);
+        lua["HOST_resume"] = new Action(_runtime.Resume);
         lua["HOST_describe"] = new Func<object?, string>(Describe);
 
         // expect() gets Lua's own pattern engine: string.find lives in this state, and expect
@@ -99,6 +147,65 @@ internal sealed class LuaScriptHost
             throw new ScriptError(FormatLuaError(ex));
         }
     }
+
+    // ---- HOST_* implementations for the mem API ------------------------------------------
+    // Lua numbers arrive as long/int via the delegates (the Lua shims already floor them);
+    // the table path still re-checks numeric-ness and integer-ness per element - the shim
+    // validates the copy it builds and this side re-validates what NLua hands back, so
+    // neither layer trusts the other. What remains here is the 32-bit range checking C#
+    // needs. Values cross into Lua as a fresh 1-based table built here - explicit
+    // construction, so no NLua array-marshaling guesswork.
+
+    private LuaTable MemRead(long addr, long count, int width)
+    {
+        uint[] values = _runtime.MemRead(Addr(addr, "mem_read"), Count(count, "mem_read"), width);
+        var table = (LuaTable)(State.DoString("return {}")[0]
+            ?? throw new ScriptError("mem_read: table allocation failed"));
+        for (int i = 0; i < values.Length; i++)
+            table[i + 1] = (long)values[i];   // Lua is 1-based
+        return table;
+    }
+
+    private void MemWriteOne(long addr, long value, int width)
+    {
+        _runtime.MemWrite(Addr(addr, "mem_write"), [CheckUint(value, "mem_write", 1)], width);
+    }
+
+    private void MemWriteTable(long addr, LuaTable table, long count, int width)
+    {
+        int n = Count(count, "mem_write");
+        var values = new uint[n];
+        for (long i = 1; i <= n; i++)
+        {
+            double number = table[i] switch
+            {
+                double d => d,
+                long l => l,
+                int iv => iv,
+                IConvertible convertible => convertible.ToDouble(CultureInfo.InvariantCulture),
+                _ => throw new ScriptError($"mem_write: value #{i} is not a number"),
+            };
+            if (Math.Floor(number) != number)
+                throw new ScriptError($"mem_write: value #{i} ({number}) is not an integer");
+            values[i - 1] = CheckUint((long)number, "mem_write", i);
+        }
+        _runtime.MemWrite(Addr(addr, "mem_write"), values, width);
+    }
+
+    private static uint Addr(long value, string what) =>
+        value is >= 0 and <= uint.MaxValue
+            ? (uint)value
+            : throw new ScriptError($"{what}: address {value} is out of the 32-bit range");
+
+    private static int Count(long value, string what) =>
+        value is >= 0 and <= int.MaxValue
+            ? (int)value
+            : throw new ScriptError($"{what}: count must be between 0 and {int.MaxValue}");
+
+    private static uint CheckUint(long value, string what, long index) =>
+        value is >= 0 and <= uint.MaxValue
+            ? (uint)value
+            : throw new ScriptError($"{what}: value #{index} ({value}) is not an unsigned 32-bit integer");
 
     /// <summary>Turns a pcall-captured Lua error into a readable message. CLR exceptions cross
     /// as LuaScriptException wrappers whose InnerException carries the real ScriptError text;

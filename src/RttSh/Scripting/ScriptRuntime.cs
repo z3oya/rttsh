@@ -16,10 +16,19 @@ namespace Toolbox.Tools.RttCli.Scripting;
 /// through the match end). Cancellation/link failure wake every pump; action APIs throw, Wait
 /// returns what it has. _pending grows unbounded while a script never matches - scripts should
 /// expect() promptly. Lifetime: exactly one runtime per transport; there is no unsubscribe.
-/// Construct before Open.</summary>
+/// Construct before Open.
+///
+/// The optional ITargetMemory backs rtt.mem_read/mem_write/is_halted/halt/resume; null (tests,
+/// or a transport without memory access) makes those throw a clear ScriptError. Like every
+/// rtt.* operation, mem/halt calls run on the single script thread only.</summary>
 internal sealed class ScriptRuntime
 {
+    /// <summary>One mem_read/mem_write call moves at most 1 MiB - a runaway count must fail
+    /// fast instead of hanging the link in a huge transfer.</summary>
+    internal const int MaxMemBytes = 1024 * 1024;
+
     private readonly IRttTransport _transport;
+    private readonly ITargetMemory? _memory;
     private readonly Encoding _sendEncoding;
     private readonly byte[] _eolBytes;
     private readonly Action<string> _logSink;
@@ -35,9 +44,10 @@ internal sealed class ScriptRuntime
     private volatile Exception? _linkError;
 
     public ScriptRuntime(IRttTransport transport, Encoding sendEncoding, byte[] eolBytes,
-        Action<string> logSink, int scriptTimeoutMs)
+        Action<string> logSink, int scriptTimeoutMs, ITargetMemory? memory = null)
     {
         _transport = transport;
+        _memory = memory;
         _sendEncoding = sendEncoding;
         _eolBytes = eolBytes;
         _logSink = logSink;
@@ -136,6 +146,134 @@ internal sealed class ScriptRuntime
     {
         ExitCode = code;
         throw new ScriptExitSignal(code);
+    }
+
+    // ---- memory & core control (the rtt.mem_* / halt API, single script thread only) ------
+    // Widths follow the J-Link SDK convention in bytes (1/2/4); values cross into Lua as
+    // plain numbers via LuaScriptHost, so no string-encoding concern applies here.
+
+    /// <summary>Reads <paramref name="count"/> units of <paramref name="width"/> bits at
+    /// <paramref name="address"/>, little-endian-decoded. One call moves at most
+    /// <see cref="MaxMemBytes"/> bytes; width-sensitive access requires an aligned address.</summary>
+    public uint[] MemRead(uint address, int count, int width)
+    {
+        int unit = MemUnit(width, "mem_read");
+        if (count < 0) throw new ScriptError("mem_read: count must be >= 0");
+        if ((long)count * unit > MaxMemBytes)
+            throw new ScriptError($"mem_read: {count} units of {unit} byte(s) exceed the {MaxMemBytes}-byte cap - split the read");
+        if (unit > 1 && address % (uint)unit != 0)
+            throw new ScriptError($"mem_read: address 0x{address:X} is not {unit}-byte aligned (width {width})");
+        if (count == 0) return [];
+
+        ITargetMemory memory = MemoryOrThrow("mem_read");
+        var buffer = new byte[count * unit];
+        int got = CallMemory(() => memory.ReadMemory(address, (uint)buffer.Length, buffer, (uint)unit), "mem_read", address);
+        if (got < buffer.Length)
+            throw new ScriptError($"mem_read: only {got} of {buffer.Length} bytes read at 0x{address:X}");
+        var values = new uint[count];
+        for (int i = 0; i < count; i++)
+        {
+            values[i] = unit switch
+            {
+                1 => buffer[i],
+                2 => (uint)(buffer[2 * i] | buffer[2 * i + 1] << 8),
+                _ => (uint)(buffer[4 * i] | buffer[4 * i + 1] << 8 | buffer[4 * i + 2] << 16 | buffer[4 * i + 3] << 24),
+            };
+        }
+        return values;
+    }
+
+    /// <summary>Writes <paramref name="values"/> as units of <paramref name="width"/> bits,
+    /// little-endian-encoded; every value must fit the width.</summary>
+    public void MemWrite(uint address, uint[] values, int width)
+    {
+        int unit = MemUnit(width, "mem_write");
+        if (values.Length == 0) return;
+        if ((long)values.Length * unit > MaxMemBytes)
+            throw new ScriptError($"mem_write: {values.Length} units of {unit} byte(s) exceed the {MaxMemBytes}-byte cap - split the write");
+        if (unit > 1 && address % (uint)unit != 0)
+            throw new ScriptError($"mem_write: address 0x{address:X} is not {unit}-byte aligned (width {width})");
+        uint max = unit switch { 1 => byte.MaxValue, 2 => ushort.MaxValue, _ => uint.MaxValue };
+        foreach (uint value in values)
+        {
+            if (value > max)
+                throw new ScriptError($"mem_write: value 0x{value:X} does not fit {width} bits");
+        }
+
+        ITargetMemory memory = MemoryOrThrow("mem_write");
+        var buffer = new byte[values.Length * unit];
+        for (int i = 0; i < values.Length; i++)
+        {
+            uint value = values[i];
+            for (int b = 0; b < unit; b++)
+                buffer[i * unit + b] = (byte)(value >> (8 * b));
+        }
+        int written = CallMemory(() => memory.WriteMemory(address, (uint)buffer.Length, buffer, (uint)unit), "mem_write", address);
+        if (written < values.Length)
+            throw new ScriptError($"mem_write: only {written} of {values.Length} units written at 0x{address:X}");
+    }
+
+    public bool IsHalted()
+    {
+        ITargetMemory memory = MemoryOrThrow("is_halted");
+        return RunControl(memory.IsHalted, "is_halted");
+    }
+
+    public void Halt()
+    {
+        ITargetMemory memory = MemoryOrThrow("halt");
+        RunControl(memory.Halt, "halt");
+    }
+
+    public void Resume()
+    {
+        ITargetMemory memory = MemoryOrThrow("resume");
+        RunControl(memory.Resume, "resume");
+    }
+
+    /// <summary>The access width in bytes for a bit width, or a ScriptError naming the API.</summary>
+    private static int MemUnit(int width, string what) => width switch
+    {
+        8 => 1,
+        16 => 2,
+        32 => 4,
+        _ => throw new ScriptError($"{what}: width must be 8, 16 or 32 bits, got {width}"),
+    };
+
+    private ITargetMemory MemoryOrThrow(string what) =>
+        _memory ?? throw new ScriptError($"{what}: this session has no memory access (mem_*/halt need the J-Link transport)");
+
+    /// <summary>Runs a core-control call and wraps transport-level failures as a ScriptError
+    /// naming the API - the no-code sibling of <see cref="CallMemory"/>'s try/catch.</summary>
+    private static T RunControl<T>(Func<T> call, string what)
+    {
+        try
+        {
+            return call();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            throw new ScriptError($"{what} failed: {ex.Message}");
+        }
+    }
+
+    private static void RunControl(Action call, string what) =>
+        RunControl<object?>(() => { call(); return null; }, what);
+
+    private static int CallMemory(Func<int> call, string what, uint address)
+    {
+        int code;
+        try
+        {
+            code = call();
+        }
+        catch (Exception ex) when (ex is IOException or InvalidOperationException or ObjectDisposedException)
+        {
+            throw new ScriptError($"{what} failed at 0x{address:X}: {ex.Message}");
+        }
+        if (code < 0)
+            throw new ScriptError($"{what} failed at 0x{address:X} (code={code}: {JLinkErrors.Describe(code)})");
+        return code;
     }
 
     // ---- internals ---------------------------------------------------------------------

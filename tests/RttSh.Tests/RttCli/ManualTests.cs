@@ -14,6 +14,11 @@ public class ManualTests
     [InlineData("now")]
     [InlineData("sleep")]
     [InlineData("exit")]
+    [InlineData("mem_read")]
+    [InlineData("mem_write")]
+    [InlineData("is_halted")]
+    [InlineData("halt")]
+    [InlineData("resume")]
     public void Manual_documents_every_rtt_function(string name)
     {
         Assert.Contains($"rtt.{name}(", Manual.Text);

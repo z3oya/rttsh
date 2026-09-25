@@ -72,7 +72,7 @@ internal static class Manual
         hex, tui, reset, filter, config - because they select a mode or
         name the file itself, so they never belong in saved defaults.
 
-        The file is read by monitor, send, script and list-devices only;
+        The file is read by monitor, send, script, flash and list-devices;
         --help, --version and this manual never touch it, so a broken config
         cannot take the reference down.
 
@@ -136,10 +136,32 @@ internal static class Manual
           rtt.now()                  monotonic milliseconds since the script started
           rtt.sleep(ms)              pause the script
           rtt.exit(code)             stop the script and exit with code (default 0)
+          rtt.mem_read(addr, n, w)   read n units of w bits (8/16/32, default 32) at the
+                                     byte address addr; returns a Lua table of unsigned
+                                     values, little-endian decoded; at most 1 MiB per
+                                     call; width > 8 needs an aligned address
+          rtt.mem_write(addr, v, w)  write one value or a Lua table of values as w-bit
+                                     (8/16/32, default 32) units, little-endian encoded;
+                                     every value must fit the width; at most 1 MiB per
+                                     call; width > 8 needs an aligned address
+          rtt.is_halted()            true while the core is halted
+          rtt.halt()                 halt the core; the link stays up and tolerates the
+                                     quiet (no stalled-core disconnect) until resume
+          rtt.resume()               resume a halted core (JLINKARM_Go)
 
         Text in and out follows --encoding; rtt.send appends the --eol
         terminator. With --eol none nothing is appended - embed \n yourself
         or consecutive sends run together on one line.
+
+        mem_read/mem_write and halt/resume reach beside the RTT link into
+        the target: addresses are plain Lua numbers (0x10 pokes work), and
+        a script-driven halt is the one case where a silent link is not an
+        error - the stalled-core auto-disconnect stands down until resume.
+        While the core is halted nothing flows, so wait/expect on target
+        output only makes sense after resume. A script that ends - or dies
+        mid-halt - with the core still halted gets a best-effort resume
+        when the session closes, so a failed run cannot leave the target
+        silently dead for the next connection.
 
         4. WRITING SCRIPTS
 

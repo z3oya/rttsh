@@ -14,11 +14,11 @@ public class LuaScriptHostTests
         }
     }
 
-    private static Harness Make(string script)
+    private static Harness Make(string script, TestTargetMemory? memory = null)
     {
         var transport = new TestRttTransport();
         var log = new List<string>();
-        var runtime = new ScriptRuntime(transport, Encoding.UTF8, [(byte)'\n'], log.Add, 0);
+        var runtime = new ScriptRuntime(transport, Encoding.UTF8, [(byte)'\n'], log.Add, 0, memory);
         string path = Path.Combine(Path.GetTempPath(), $"rtt-cli-test-{Guid.NewGuid():N}.lua");
         File.WriteAllText(path, script);
         return new Harness(new LuaScriptHost(runtime, File.ReadAllText(path), "@" + path), transport, runtime, log, path);
@@ -316,5 +316,83 @@ public class LuaScriptHostTests
         var h = MakeEval("error('boom')");
         var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
         Assert.Contains("eval:1:", ex.Message);
+    }
+
+    // ---- the mem API across the NLua boundary --------------------------------------------
+    // These pin the actual marshaling: tables built host-side, numbers crossing as Lua
+    // numbers, errors surfacing as catchable Lua errors naming the rtt.* function.
+
+    [Fact]
+    public void Mem_read_returns_a_lua_table_of_units()
+    {
+        var m = new TestTargetMemory { Data = [0x78, 0x56, 0x34, 0x12] };
+        using var h = Make("""
+            local v = rtt.mem_read(0, 1)
+            rtt.log(string.format('%x %d %d', v[1], #v, v[1] == 0x12345678 and 1 or 0))
+            """, m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["12345678 1 1"], h.Log);
+        Assert.Equal(4u, m.LastAccess);   // width defaults to 32
+    }
+
+    [Fact]
+    public void Mem_write_accepts_one_value_and_tables()
+    {
+        var m = new TestTargetMemory();
+        using var h = Make("""
+            rtt.mem_write(0x40000000, 0x1234, 16)
+            rtt.mem_write(0x40000010, {0xDE, 0xAD}, 8)
+            """, m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal([0x34, 0x12], m.Written[0]);
+        Assert.Equal([0xDE, 0xAD], m.Written[1]);
+    }
+
+    [Fact]
+    public void Halt_resume_roundtrip_through_lua()
+    {
+        var m = new TestTargetMemory();
+        using var h = Make("""
+            rtt.halt()
+            assert(rtt.is_halted())
+            rtt.resume()
+            assert(not rtt.is_halted())
+            """, m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(1, m.Halts);
+    }
+
+    [Fact]
+    public void Mem_api_errors_are_catchable_lua_errors_naming_the_function()
+    {
+        using var h = Make("""
+            local ok, err = pcall(function() rtt.mem_read(1, 1, 12) end)
+            rtt.log(tostring(ok) .. ':' .. tostring(err))
+            """);
+        Assert.Equal(0, h.Host.Run());
+        Assert.StartsWith("false:", h.Log[0]);
+        Assert.Contains("mem_read: width", h.Log[0]);
+    }
+
+    [Fact]
+    public void Mem_write_rejects_values_beyond_32_bits_at_the_boundary()
+    {
+        var m = new TestTargetMemory();
+        using var h = Make("""
+            local ok, err = pcall(function() rtt.mem_write(0x40000000, 0x100000000) end)
+            rtt.log(tostring(ok) .. ':' .. tostring(err))
+            """, m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.StartsWith("false:", h.Log[0]);
+        Assert.Contains("unsigned 32-bit", h.Log[0]);
+        Assert.Empty(m.Written);
+    }
+
+    [Fact]
+    public void Mem_api_without_a_backend_fails_the_script_cleanly()
+    {
+        using var h = Make("rtt.mem_read(0, 1)");   // Make() wires no memory by default
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("no memory access", ex.Message);
     }
 }

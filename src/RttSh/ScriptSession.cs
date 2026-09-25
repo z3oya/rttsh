@@ -36,7 +36,7 @@ internal static class ScriptSession
         using var transport = new JLinkRttTransport();
         if (logStream is not null)
             transport.DataReceived += data => RttLogFile.Append(logStream, data);
-        var runtime = new ScriptRuntime(transport, encoding, eol, SessionSupport.WriteDiag, options.ScriptTimeoutMs ?? 0);
+        var runtime = new ScriptRuntime(transport, encoding, eol, SessionSupport.WriteDiag, options.ScriptTimeoutMs ?? 0, memory: transport);
 
         if (!SessionSupport.OpenOrReport(transport, config)) return 1;
 

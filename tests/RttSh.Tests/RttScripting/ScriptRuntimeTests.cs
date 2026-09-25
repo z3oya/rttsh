@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using RttSh.Core.Rtt;
 using RttSh.Core.SerialComm;
 using Toolbox.Tools.RttCli.Scripting;
 
@@ -293,5 +294,113 @@ public class ScriptRuntimeTests
         var signal = Assert.Throws<ScriptExitSignal>(() => rt.Exit(3));
         Assert.Equal(3, signal.Code);
         Assert.Equal(3, rt.ExitCode);
+    }
+
+    // ---- rtt.mem_* / halt (the ITargetMemory-backed API) --------------------------------
+    // Named MakeMemRuntime (not an overload of MakeRuntime) so "no backend" can be spelled
+    // explicitly as null instead of leaning on overload resolution against TestRttTransport.
+
+    private static ScriptRuntime MakeMemRuntime(ITargetMemory? memory, int timeoutMs = 0) =>
+        new(new TestRttTransport(), Encoding.UTF8, [(byte)'\n'], _ => { }, timeoutMs, memory);
+
+    [Fact]
+    public void Mem_read_decodes_units_little_endian_and_passes_the_access_width()
+    {
+        var m = new TestTargetMemory { Data = [0x78, 0x56, 0x34, 0x12, 0x21, 0x43] };
+        var rt = MakeMemRuntime(m);
+        Assert.Equal([0x12345678u, 0x4321u], rt.MemRead(0, 2, 32));
+        Assert.Equal(4u, m.LastAccess);
+    }
+
+    [Fact]
+    public void Mem_read16_uses_halfword_access()
+    {
+        var m = new TestTargetMemory { Data = [0x34, 0x12] };
+        var rt = MakeMemRuntime(m);
+        Assert.Equal([0x1234u], rt.MemRead(0, 1, 16));
+        Assert.Equal(2u, m.LastAccess);
+    }
+
+    [Fact]
+    public void Mem_read8_is_alignment_free()
+    {
+        var m = new TestTargetMemory { Data = [0x11, 0x22, 0x33] };
+        var rt = MakeMemRuntime(m);
+        Assert.Equal([0x22u], rt.MemRead(1, 1, 8));
+    }
+
+    [Fact]
+    public void Mem_read_rejects_bad_width_unaligned_address_and_overcap_counts()
+    {
+        var rt = MakeMemRuntime(new TestTargetMemory());
+        Assert.Contains("mem_read: width", Assert.Throws<ScriptError>(() => rt.MemRead(0, 1, 12)).Message);
+        Assert.Contains("aligned", Assert.Throws<ScriptError>(() => rt.MemRead(0x2000_0001, 1, 32)).Message);
+        Assert.Contains("aligned", Assert.Throws<ScriptError>(() => rt.MemRead(0x2000_0001, 1, 16)).Message);
+        // the cap is on bytes: 300000 x 1 fits, 1100000 x 1 does not, and 300000 x 4 overflows it
+        var values = rt.MemRead(0, 300000, 8);
+        Assert.Equal(300000, values.Length);
+        Assert.Contains("1048576", Assert.Throws<ScriptError>(() => rt.MemRead(0, 1100000, 8)).Message);
+        Assert.Contains("1048576", Assert.Throws<ScriptError>(() => rt.MemRead(0, 300000, 32)).Message);
+    }
+
+    [Fact]
+    public void Mem_read_zero_count_is_a_no_op()
+    {
+        var m = new TestTargetMemory { Data = [0x01] };
+        var rt = MakeMemRuntime(m);
+        Assert.Equal([], rt.MemRead(0, 0, 32));
+        Assert.Empty(m.ReadAddresses);
+    }
+
+    [Fact]
+    public void Mem_read_maps_a_negative_dll_code_through_the_error_table()
+    {
+        var rt = MakeMemRuntime(new TestTargetMemory { ErrorCode = -261 });
+        var ex = Assert.Throws<ScriptError>(() => rt.MemRead(0x2000_0000, 1, 32));
+        Assert.Contains("mem_read failed at 0x20000000", ex.Message);
+        Assert.Contains("-261", ex.Message);
+        Assert.Contains("could not find supported CPU", ex.Message);
+    }
+
+    [Fact]
+    public void Mem_read_without_a_memory_backend_names_the_api()
+    {
+        var rt = MakeMemRuntime(memory: null);   // explicit: the no-backend case under test
+        Assert.Contains("mem_read: this session has no memory access", Assert.Throws<ScriptError>(() => rt.MemRead(0, 1, 32)).Message);
+        Assert.Contains("halt: this session has no memory access", Assert.Throws<ScriptError>(() => rt.Halt()).Message);
+    }
+
+    [Fact]
+    public void Mem_write_encodes_units_little_endian()
+    {
+        var m = new TestTargetMemory();
+        var rt = MakeMemRuntime(m);
+        rt.MemWrite(0x2000_0010, [0x1234, 0xABCD], 16);
+        Assert.Equal([0x34, 0x12, 0xCD, 0xAB], m.Written[0]);
+        Assert.Equal(2u, m.LastAccess);
+    }
+
+    [Fact]
+    public void Mem_write_rejects_values_that_do_not_fit_the_width()
+    {
+        var rt = MakeMemRuntime(new TestTargetMemory());
+        Assert.Contains("does not fit 16 bits", Assert.Throws<ScriptError>(() => rt.MemWrite(0, [0x1_2345], 16)).Message);
+        Assert.Contains("does not fit 8 bits", Assert.Throws<ScriptError>(() => rt.MemWrite(0, [0x100], 8)).Message);
+        // 0xFFFFFFFF is a legal 32-bit unit (the >32-bit case is the Lua boundary's job)
+        rt.MemWrite(0, [0xFFFF_FFFFu], 32);
+    }
+
+    [Fact]
+    public void Halt_resume_roundtrip_and_is_halted()
+    {
+        var m = new TestTargetMemory();
+        var rt = MakeMemRuntime(m);
+        Assert.False(rt.IsHalted());
+        rt.Halt();
+        Assert.True(rt.IsHalted());
+        Assert.Equal(1, m.Halts);
+        rt.Resume();
+        Assert.False(rt.IsHalted());
+        Assert.Equal(1, m.Resumes);
     }
 }
