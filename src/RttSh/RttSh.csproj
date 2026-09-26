@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>Toolbox.Tools.RttCli</RootNamespace>
     <!-- The tool's own release version, shown by the version flag. -->
-    <Version>0.3.2</Version>
+    <Version>0.3.3</Version>
     <!-- McpNative's function-pointer ABI and the UnmanagedCallersOnly trampoline. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>

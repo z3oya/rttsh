@@ -2,7 +2,7 @@
 ; Build via installer\build-installer.ps1 (dotnet publish + ISCC)
 
 #define MyAppName "rttsh"
-#define MyAppVersion "0.3.2"
+#define MyAppVersion "0.3.3"
 #define MyAppPublisher "rttsh"
 
 ; Flavor is passed in by build-installer.ps1 (/DFlavor=...); default for manual compiles.
@@ -41,6 +41,8 @@ Source: "publish\App\ELFSharp.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\NLua.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\KeraLua.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\lua54.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Rust MCP glue (rttsh mcp): the rmcp server runs inside this DLL, tool execution in managed code
+Source: "publish\App\rttsh_mcp_native.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; CLI parser (managed, no native parts). Its localized satellites (cs\ de\ ...)
 ; stay unshipped: the CLI surface is English-only by design.
 Source: "publish\App\System.CommandLine.dll"; DestDir: "{app}"; Flags: ignoreversion
