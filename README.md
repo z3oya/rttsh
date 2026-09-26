@@ -4,6 +4,10 @@ rttsh 是基于 SEGGER J-Link RTT 的命令行终端，用于固件的自动化�
 
 面向 AI 编码代理提供 MCP 服务器（`rttsh mcp`）与技能 `skills/rttsh-verify-on-board`。
 
+<div align="center">
+  <img src="docs/images/Animation.gif"  width="800" >
+</div>
+
 ## 环境要求
 
 Windows（依赖 JLink_x64.dll 与 lua54）；.NET 10 运行时（framework 安装包需要，self-contained 包自带）；SEGGER J-Link 驱动与探针（JLink DLL 自动探测，可 `--dll` 指定）；已链接 RTT 控制块（`_SEGGER_RTT`）并烧录到目标板的固件。安装包与源码构建见 `installer/`。
