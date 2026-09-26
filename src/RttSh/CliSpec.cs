@@ -46,6 +46,7 @@ internal sealed class Spec
     public required Option<string?> Elf { get; init; }
     public required Option<string?> Eval { get; init; }
     public required Command Manual { get; init; }
+    public required Command Mcp { get; init; }
     public required Command Flash { get; init; }
     public required Command FlashDownload { get; init; }
     public required Command FlashErase { get; init; }
@@ -185,6 +186,10 @@ internal static class CliSpec
 
         Command manual = new("manual", "print the reference: config file keys, the rtt.* scripting API, script mechanics");
 
+        Command mcp = new("mcp",
+            "run the MCP server over stdio (AI clients launch this; its tools drive one " +
+            "J-Link RTT session - connect / send / expect / mem_read / list_devices / ...)");
+
         Command flashDownloadCommand = new("download",
             "program a firmware image (Intel hex / ELF / S-record / raw .bin) to the target's flash; " +
             "the core stays halted afterwards unless --reset resumes it");
@@ -207,6 +212,7 @@ internal static class CliSpec
         root.Subcommands.Add(send);
         root.Subcommands.Add(script);
         root.Subcommands.Add(flash);
+        root.Subcommands.Add(mcp);
         root.Subcommands.Add(manual);
         // A root with subcommands demands one ("Required command was not provided") unless
         // it has its own action; Parse never invokes it - the mapping layer turns the
@@ -254,6 +260,7 @@ internal static class CliSpec
             Elf = elf,
             Eval = eval,
             Manual = manual,
+            Mcp = mcp,
             Flash = flash,
             FlashDownload = flashDownloadCommand,
             FlashErase = flashEraseCommand,

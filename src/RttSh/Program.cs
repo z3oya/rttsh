@@ -61,6 +61,13 @@ internal static class Program
             case FlashCommand c:
                 PrepareHardwareOptions(c.Options, resolveElf: false);
                 break;
+            case McpCommand c:
+                // No chip gates here: chip + validation arrive per connect tool call. Only
+                // the root (relative-path anchor) and the config merge apply, like
+                // list-devices - this command never opens a link itself.
+                RttRoot.Apply(c.Options);
+                ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                break;
         }
 
         return command switch
@@ -73,6 +80,7 @@ internal static class Program
             MonitorCommand c => MonitorSession.Run(c.Options),
             SendCommand c => SendOnce.Run(c),
             ScriptCommand c => ScriptSession.Run(c),
+            McpCommand c => McpServerSession.Run(c),
             FlashDownloadCommand c => FlashOnce.Run(c),
             FlashEraseCommand c => FlashOnce.RunErase(c),
             _ => UsageError("internal: unhandled command"),

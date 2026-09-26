@@ -27,6 +27,10 @@ internal sealed class ScriptRuntime
     /// fast instead of hanging the link in a huge transfer.</summary>
     internal const int MaxMemBytes = 1024 * 1024;
 
+    /// <summary>Consumed history is compacted once it grows past this many chars (Expect and
+    /// ReadAvailable share the buffer).</summary>
+    private const int CompactionThreshold = 8192;
+
     private readonly IRttTransport _transport;
     private readonly ITargetMemory? _memory;
     private readonly Encoding _sendEncoding;
@@ -110,6 +114,28 @@ internal sealed class ScriptRuntime
     /// byte-exact path - Wait/Expect strings are re-encoded by the binding.</summary>
     public string WaitHex(int timeoutMs) => HexCodec.Format(Encoding.Latin1.GetBytes(Wait(timeoutMs)));
 
+    /// <summary>The MCP read: everything received but not yet consumed (the region Expect
+    /// scans), consumed through the end so the next read/expect starts after it. Terminal
+    /// semantics: output already pending is returned at once (a quiet target must not tax
+    /// every poll the full timeout); when nothing is pending the call waits up to timeoutMs
+    /// for the first bytes, so send + read picks up the reply without polling. Returns ""
+    /// when nothing arrived. The consuming sibling of Wait - Wait taps without consuming
+    /// (the Lua semantic).</summary>
+    public string ReadAvailable(int timeoutMs)
+    {
+        ThrowLinkError();
+        CheckWatchdog();
+        DrainInbox();   // ingest whatever the transport has already delivered
+        if (_scanPos >= _pending.Length)
+        {
+            int before = _pending.Length;
+            PumpUntil(() => _pending.Length > before, timeoutMs);
+        }
+        string text = Region();
+        ConsumeThrough(_pending.Length);
+        return text;
+    }
+
     public string Expect(string pattern, int timeoutMs)
     {
         ThrowLinkError();
@@ -125,12 +151,7 @@ internal sealed class ScriptRuntime
             throw new ScriptError($"expect: '{pattern}' not found within {timeoutMs} ms; buffer tail: \"{DescribeTail()}\"");
         }
         string result = region[..end.Value];
-        _scanPos += end.Value;
-        if (_scanPos >= 8192)
-        {
-            _pending.Remove(0, _scanPos);   // compact consumed history
-            _scanPos = 0;
-        }
+        ConsumeThrough(_scanPos + end.Value);
         return result;
     }
 
@@ -293,6 +314,19 @@ internal sealed class ScriptRuntime
     }
 
     private string Region() => _pending.ToString(_scanPos, _pending.Length - _scanPos);
+
+    /// <summary>Marks everything through absolute offset <paramref name="end"/> consumed,
+    /// compacting the buffer once the consumed history grows past CompactionThreshold
+    /// (the one compaction rule, shared by Expect and ReadAvailable).</summary>
+    private void ConsumeThrough(int end)
+    {
+        _scanPos = end;
+        if (_scanPos >= CompactionThreshold)
+        {
+            _pending.Remove(0, _scanPos);   // compact consumed history
+            _scanPos = 0;
+        }
+    }
 
     /// <summary>Last ≤80 chars of the pending buffer, control characters and backslashes escaped -
     /// escaping the introducer too keeps this invertible, so a literal "\n" can never be mistaken

@@ -96,6 +96,9 @@ internal sealed record MonitorCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record ListDevicesCommand(CommandLineOptions Options) : RttCommand;
 internal sealed record SendCommand(string Payload, CommandLineOptions Options) : RttCommand;
 internal sealed record ScriptCommand(string? ScriptPath, string? EvalSource, CommandLineOptions Options) : RttCommand;
+/// <summary>The MCP server over stdio: no hardware options at startup - chip/validation
+/// arrive per connect tool call, so only root/config pre-dispatch steps apply.</summary>
+internal sealed record McpCommand(CommandLineOptions Options) : RttCommand;
 /// <summary>Base of the two flash subcommands: the pre-dispatch options pass in Program
 /// treats them identically (connect options, no RTT link).</summary>
 internal abstract record FlashCommand(CommandLineOptions Options) : RttCommand;
@@ -227,6 +230,8 @@ internal static class CommandLine
         }
         if (command == spec.ListDevices)
             return new ListDevicesCommand(options);
+        if (command == spec.Mcp)
+            return new McpCommand(options);
         if (command == spec.Manual)
             return new ManualCommand();
         if (command == spec.Flash)
@@ -341,6 +346,7 @@ internal static class CommandLine
         if (matched == spec.Send) return ["send", "--help"];
         if (matched == spec.Script) return ["script", "--help"];
         if (matched == spec.ListDevices) return ["list-devices", "--help"];
+        if (matched == spec.Mcp) return ["mcp", "--help"];
         if (matched == spec.Manual) return ["manual", "--help"];
         if (matched == spec.Flash) return ["flash", "--help"];
         if (matched == spec.FlashDownload) return ["flash", "download", "--help"];

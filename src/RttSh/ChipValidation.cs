@@ -15,14 +15,18 @@ internal static class ChipValidation
     /// <summary>The dispatch-time step, called from Program.Run right after EnsureChip - after
     /// the config merge, so a chip coming from .rttsh/config.json is validated too. A
     /// whitespace-only chip is left to EnsureChip and the session's Clamped() backstop.</summary>
-    public static void EnsureKnown(CommandLineOptions options)
+    public static void EnsureKnown(CommandLineOptions options) =>
+        EnsureKnown(options.Chip.Trim(), options.DllPath);
+
+    /// <summary>The (chip, dllPath) core behind the options overload; the MCP tool host
+    /// validates its connect calls through this same path.</summary>
+    public static void EnsureKnown(string chip, string dllPath)
     {
-        string chip = options.Chip.Trim();
         if (chip.Length == 0)
             return;
 
         using var library = new JLinkLibrary();
-        if (!library.Load(options.DllPath, out _))
+        if (!library.Load(dllPath, out _))
             return;
         if (!JLinkDeviceDatabase.TryEnumerate(library, out List<JLinkDeviceRecord> records, out _))
             return;
