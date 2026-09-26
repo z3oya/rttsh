@@ -276,6 +276,16 @@ public class ConfigFileTests
         Assert.Equal(1000, options.SpeedKhz);   // unset members still fill
     }
 
+    // The CLI layer fills LogFile before the config merge, so the file's "log" key can never
+    // push a spelled-out path over a bare --log: command line beats config, as everywhere else.
+    [Fact]
+    public void A_config_log_cannot_override_a_bare_cli_log()
+    {
+        var options = new CommandLineOptions { LogFile = RttLogFile.AutoMarker };
+        ConfigFile.ApplyTo(options, new ConfigValues { LogFile = "from-config.bin" });
+        Assert.Equal(RttLogFile.AutoMarker, options.LogFile);
+    }
+
     [Fact]
     public void Null_values_leave_options_untouched()
     {

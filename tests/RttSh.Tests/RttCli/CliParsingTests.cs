@@ -345,6 +345,19 @@ public class CliParsingTests
     }
 
     [Fact]
+    public void Bare_log_option_parses_to_the_auto_marker()
+    {
+        // the bare spelling is the default-home form; a spelled-out value, empty included,
+        // is never the marker and stays literal
+        Assert.Equal(RttLogFile.AutoMarker,
+            ((MonitorCommand)CommandLine.Parse(["--chip", "X", "--log"])).Options.LogFile);
+        Assert.Equal("out.bin",
+            ((MonitorCommand)CommandLine.Parse(["--log", "out.bin"])).Options.LogFile);
+        Assert.Equal("",
+            ((MonitorCommand)CommandLine.Parse(["--log", ""])).Options.LogFile);
+    }
+
+    [Fact]
     public void List_devices_parses_the_filter()
     {
         var command = Assert.IsType<ListDevicesCommand>(CommandLine.Parse(["list-devices", "--filter", "stm32"]));

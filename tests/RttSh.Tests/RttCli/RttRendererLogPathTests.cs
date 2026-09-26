@@ -83,3 +83,35 @@ public class RttRendererLogPathTests
         }
     }
 }
+
+/// <summary>Bare --log: Open resolves the parse layer's AutoMarker into a fresh timestamped
+/// file under ./.rttsh/log/ of the current working directory. Resolving reads the process
+/// working directory - global state xunit knows nothing about - so this collection joins the
+/// serialized RttRoot one, same reasoning as RttRootTests.</summary>
+[Collection("RttRoot")]
+public class RttLogFileAutoPathTests
+{
+    [Fact]
+    public void A_bare_log_opens_a_timestamped_file_in_the_local_log_directory()
+    {
+        string saved = Environment.CurrentDirectory;
+        try
+        {
+            string root = Directory.CreateDirectory(
+                Path.Combine(Path.GetTempPath(), "rttsh-log-" + Path.GetRandomFileName())).FullName;
+            Environment.CurrentDirectory = root;
+
+            using FileStream? stream = RttLogFile.Open(RttLogFile.AutoMarker);
+
+            Assert.NotNull(stream);
+            string[] files = Directory.GetFiles(Path.Combine(root, ".rttsh", "log"), "*.log");
+            Assert.Single(files);
+            Assert.Equal(Path.GetFullPath(files[0]), Path.GetFullPath(stream.Name));
+            Assert.Matches(@"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.\d{3}\.log", Path.GetFileName(files[0]));
+        }
+        finally
+        {
+            Environment.CurrentDirectory = saved;
+        }
+    }
+}

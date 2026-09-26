@@ -114,8 +114,16 @@ internal static class CliSpec
             ".rttsh/tui-history.json); Left/Right/Home/End move the caret, Delete/Backspace edit");
         Option<bool> verbose = Flag("--verbose",
             "show J-Link connection progress logs (default: quiet; runtime errors are always shown)");
-        Option<string?> log = TextOption("--log", "file", "log file",
-            "also append raw received bytes to a file");
+        Option<string?> log = new("--log")
+        {
+            HelpName = "file",
+            Description = "also append raw received bytes to a file (bare --log: .rttsh/log/<timestamp>.log)",
+            Recursive = true,
+            Arity = ArgumentArity.ZeroOrOne,   // the bare spelling must reach the CustomParser
+            CustomParser = result => result.Tokens.Count == 0
+                ? RttLogFile.AutoMarker
+                : result.Tokens[0].Value,
+        };
         Option<int?> wait = IntOption("--wait", "ms", "milliseconds",
             "(send / redirected monitor) print received bytes for this long before exiting; " +
             "redirected monitor defaults to 500 ms");

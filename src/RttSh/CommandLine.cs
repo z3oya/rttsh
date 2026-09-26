@@ -29,6 +29,9 @@ internal sealed class CommandLineOptions
     public bool Tui { get; set; }
     /// <summary>Show J-Link connection progress logs; off by default (errors are always shown).</summary>
     public bool Verbose { get; set; }
+    /// <summary>--log file path, or <see cref="RttLogFile.AutoMarker"/> for a bare --log
+    /// (opaque: never interpreted here, resolved by <see cref="RttLogFile.Open"/> at session
+    /// start); null = no logging.</summary>
     public string? LogFile { get; set; }
     public int? WaitMs { get; set; }
     /// <summary>script only: hard limit for the whole script in ms; 0/absent = no limit.
