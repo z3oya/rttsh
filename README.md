@@ -1,131 +1,80 @@
 # rttsh
 
-**rttsh** 是一个可脚本化的 SEGGER J-Link RTT 命令行终端，用于固件的自动化在板验证。固件侧链接 SEGGER RTT 并内置一个命令行控制台，主机侧用 Lua 脚本发送命令、匹配应答、断言输出与时序，使上板验证从人工终端操作转变为可批量执行、可纳入 CI 的自动化测试。
+rttsh 是基于 SEGGER J-Link RTT 的命令行终端，用于固件的自动化在板验证。固件通过 SEGGER RTT 提供命令行控制台，主机侧以 Lua 脚本发送命令、匹配应答、断言输出与时序，使上板验证可批量执行并可纳入 CI。通信与烧录共用同一调试探针，不占用目标板的 UART 等外设。
 
-仓库同时提供面向 AI 编码代理（Claude Code / Codex 等）的技能 `skills/rttsh-verify-on-board`。
-
-```
-rttsh send "led r on" --chip STM32H743XI --wait 300
-led r on
-LED r on
-rttsh script Tests/t01_async1_accept_done.lua
-t01 PASS (id=43)
-```
-
-## 功能特性
-
-- **Lua 自动化在板验证（script）**：`rtt.*` API 覆盖发送、期望、二进制收发、毫秒级计时断言，以及目标内存读写（`rtt.mem_read`/`rtt.mem_write`）与 halt/resume 核心控制；expect 超时即失败，错误信息带接收缓冲区尾部。
-- **零额外通信外设**：RTT 经调试探针收发，固件不占 UART；会话按"探针 + 通道"互斥。
-- **交互监控（monitor）**：直接运行即进入实时终端；`-tui` 为对话式布局，支持历史翻阅、光标移动编辑，历史跨会话持久化。
-- **单发探测（send）**：发送一行并接收应答（`--wait`），支持十六进制原始字节。
-- **固件烧录（flash）**：`flash download` 烧录 Intel hex / ELF / S-record(.mot) / raw .bin（DLL 内部完成擦除+编程+校验，带进度显示，`--reset` 烧后复位运行）；`flash erase` 整片擦除（交互确认，重定向 stdin 需 `--yes`）。两者完成后核心保持 halted，除非带 `--reset`。
-- **控制块地址解析（`--elf`）**：从固件镜像的 `_SEGGER_RTT` 符号解析 RTT 控制块地址，随重编译自动更新。
-- **JSON 配置文件**：`.rttsh/config.json` 按工作目录自动加载芯片名等默认值，优先级为命令行 > 配置文件 > 内置默认值。
-- **设备数据库查询（list-devices）**：确认 `--chip` 在 J-Link 设备库中的准确拼写。
-- **内置参考手册**：`rttsh manual` 打印配置文件键、`rtt.*` API 与脚本编写指南，不依赖网络文档。
+面向 AI 编码代理提供 MCP 服务器（`rttsh mcp`）与技能 `skills/rttsh-verify-on-board`。
 
 ## 环境要求
 
-| 依赖 | 说明 |
-|------|------|
-| Windows | 依赖 JLink_x64.dll 与 lua54 原生库，当前面向 Windows 发布 |
-| .NET 10 运行时 | framework 安装包需要；self-contained 包自带 |
-| SEGGER J-Link 驱动 + 探针 | 需要 J-Link 软件（含 JLink DLL，rttsh 自动探测，也可 `--dll` 指定） |
-| 目标固件 | 已链接 SEGGER RTT（含 `_SEGGER_RTT` 控制块）并烧录到目标板 |
+Windows（依赖 JLink_x64.dll 与 lua54）；.NET 10 运行时（framework 安装包需要，self-contained 包自带）；SEGGER J-Link 驱动与探针（JLink DLL 自动探测，可 `--dll` 指定）；已链接 RTT 控制块（`_SEGGER_RTT`）并烧录到目标板的固件。安装包与源码构建见 `installer/`。
 
-## 快速上手
+## 用法
 
-### 1. 确认芯片名称
+`--chip` 必须与 J-Link 设备数据库中的名称一致（忽略大小写），可用 `rttsh list-devices --filter H743` 查询；名称无效时直接报错退出（exit 2），不会触发设备选择弹窗。
 
-`--chip` 必须与 J-Link 设备数据库中的名称完全一致：
-
-```bash
-rttsh list-devices --filter H743
-```
-
-rttsh 启动时会把 `--chip` 与设备库精确匹配（忽略大小写）：名称不在库中会直接报错退出（exit 2），不会触发 J-Link DLL 的设备选择弹窗。
-
-### 2. 单发命令，接收应答
+发送一行并等待应答：
 
 ```bash
 rttsh send "led r on" --chip STM32H743XI --wait 300
-# led r on            固件回显
-# LED r on            应答行
-rttsh send "6c 65 64 20 67 20 6f 6e 0a" --hex --chip STM32H743XI --wait 300   # 原始字节 "led g on\n"
 ```
 
-载荷与选项的先后顺序不限；发送 `--` 开头的内容用 `send -- --value`，详见 `rttsh send --help`。
+`--hex` 可发送原始字节。不带子命令运行则进入交互终端（`-tui` 为对话式布局），Ctrl+C 退出；输出重定向时转为只收模式，可接 `grep` 等过滤。
 
-### 3. 交互监控
+脚本模式是自动化验证的核心。`script --eval` 可直接内联执行 Lua：
 
 ```bash
-rttsh --chip STM32H743XI          # 默认子命令为 monitor
-rttsh --chip STM32H743XI -tui     # 对话式布局，↑/↓ 翻历史、←/→/Home/End 移动光标
+rttsh script --eval 'rtt.send("led r toggle"); rtt.expect("LED r toggled", 500)' --chip STM32H743XI
 ```
 
-键盘输入按行发送（行尾由 `--eol` 决定，默认 `lf`），Ctrl+C 退出；输出重定向时转为只收模式，`--wait 1500` 接收 1.5 秒后退出，可接 `grep` 等过滤。
-
-### 4. Lua 脚本
-
-```bash
-rttsh script --eval 'rtt.send("led r on"); rtt.expect("LED r on", 500)' --chip STM32H743XI
-```
+成体系的用例写成脚本文件。`rtt.expect` 返回匹配文本，可读回应答字段做状态断言：
 
 ```lua
--- smoke.lua
-rtt.send("led r toggle")
-rtt.expect("LED r toggled", 500)
-rtt.log("smoke PASS")
+-- Tests/t21_led_query.lua
+local function query_led(name)
+  rtt.send("led "..name)
+  local q = rtt.expect("LED "..name.." %a+", 500)
+  return q:match("LED "..name.." (%a+)")
+end
+local g0 = query_led("g")
+rtt.send("led g toggle")
+rtt.expect("LED g toggled", 500)
+assert(query_led("g") ~= g0, "state did not flip")
+rtt.log("t21 PASS")
 ```
 
-expect 失败时退出码为 1，错误信息包含缓冲区尾部，可直接看到固件的实际应答：
+完整套件在 `examples/stm32/Tests`（23 个脚本，需真实目标板），覆盖字段提取、否定断言、计时窗口、通道独立性等场景。
 
-```
-rttsh: smoke.lua:2: expect: 'LED r = ON' not found within 500 ms; buffer tail: "led r toggle\r\nLED r toggled\r\nrtt> "
-```
+expect 超时即失败（exit 1），错误信息附接收缓冲区尾部，可直接看到固件的实际应答。`rtt.*` API 还覆盖二进制收发与目标内存读写（`rtt.mem_read`/`rtt.mem_write`）。
 
-### 5. 配置文件
+RTT 控制块地址默认由 SDK 扫描 RAM 得出；`--elf <镜像>` 改为从 `_SEGGER_RTT` 符号解析，随重编译自动更新，结果缓存在 `.rttsh/elf-cache/`。
 
-`examples/stm32/.rttsh/config.json`：
-
-```json
-{ "chip": "STM32H743XI", "scriptTimeout": 20000 }
-```
-
-在该目录下运行时自动加载，无需再指定 `--chip`：
-
-```bash
-cd examples/stm32
-rttsh script Tests/t01_async1_accept_done.lua    # t01 PASS (id=43)
-```
-
-`-C/--root <dir>` 以 git -C 语义切换运行基准目录：隐式配置、`.rttsh/` 状态与所有相对路径均锚定到该目录。
-
-### 6. 用 --elf 免去手工地址
-
-```bash
-rttsh send "help" --elf MDK-ARM/stm32-project/stm32-project.axf --wait 100
-# rttsh: --elf: _SEGGER_RTT at 0x24000070 (from '...')
-```
-
-从镜像的 `_SEGGER_RTT` 符号解析控制块地址，monitor / send / script 均支持；解析结果缓存在 `.rttsh/elf-cache/`，显式 `--rtt-addr` 优先于 `--elf`。
+运行参数可写入工作目录下的 `.rttsh/config.json`，自动加载（键：chip、speed、interface、sn、channel、rttAddr、rttRange、elf、dll、encoding、eol、wait、scriptTimeout、log，类型与默认值见 `rttsh manual`）。`-C/--root` 切换运行基准目录；`--log` 记录会话收发。
 
 ## 命令
 
-| 命令 | 作用 |
-|------|------|
-| （无子命令） | monitor：交互式 RTT 终端 |
-| `send <text>` | 发送一次，可选等待应答 |
-| `script [<file.lua>]` | 运行 Lua 自动化脚本（或 `--eval <lua 代码>`） |
-| `flash download <file>` | 烧录固件镜像；hex/elf/mot 自带地址，raw .bin 需 `--addr`，`--reset` 烧后复位（否则核心保持 halted） |
-| `flash erase` | 整片擦除 flash；交互确认，重定向 stdin 需 `--yes`；`--reset` 擦后复位（否则核心保持 halted） |
-| `list-devices` | 列出 J-Link DLL 设备数据库（可 `--filter` 过滤） |
-| `manual` | 打印参考手册 |
+| 命令                      | 作用                                     |
+| ----------------------- | -------------------------------------- |
+| （无子命令）                  | 交互式 RTT 终端                             |
+| `send <text>`           | 发送一次，可选等待应答                            |
+| `script [<file.lua>]`   | 运行 Lua 脚本，或 `--eval <代码>`              |
+| `flash download <file>` | 烧录 hex/elf/mot/bin；raw .bin 需 `--addr` |
+| `flash erase`           | 整片擦除；重定向 stdin 时需 `--yes`              |
+| `mcp`                   | 以 stdio 运行 MCP 服务器                     |
+| `list-devices`          | 列出设备数据库（`--filter` 过滤）                 |
+| `manual`                | 打印参考手册                                 |
 
-退出码：**0** 成功，**1** 运行失败（含 expect 超时），**2** 用法错误。exit 0 只表示 rttsh 自身无错误：固件层的错误（命令不存在、参数非法）同样 exit 0，判读必须依据应答文本。
+> flash 操作完成后核心保持 halted，带 `--reset` 以在操作完成后复位。
+
+退出码：0 成功，1 运行失败（含 expect 超时），2 用法错误。exit 0 仅表示 rttsh 自身无错误，固件层错误同样返回 0，判定必须依据应答文本。
+
+## MCP
+
+`rttsh mcp` 由 MCP 客户端以 stdio 启动，提供 connect、disconnect、get_status、send、rtt_read、expect、mem_read、list_devices 八个工具，与 Lua 脚本共用同一执行引擎，任意时刻至多持有一个目标会话。注册示例：
+
+```json
+{ "mcpServers": { "rttsh": { "command": "rttsh", "args": ["mcp"] } } }
+```
 
 ## 文档
 
-- `rttsh manual` — 完整参考：配置文件全部键与类型规则、`--elf` 解析规则、`rtt.*` API、脚本编写要点（捕获、否定断言、计时断言、Lua 模式）与运行机制。
-- `rttsh --help` / `rttsh <命令> --help` — 全部选项、默认值与退出码。
-- `examples/stm32` — 示例固件与在板测试套件；`skills/rttsh-verify-on-board` — AI 编码代理技能。
+`rttsh manual` 为完整参考（配置键、`rtt.*` API、脚本编写要点）；`rttsh --help` 及各子命令 `--help` 列出全部选项与默认值。
