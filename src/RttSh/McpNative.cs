@@ -2,37 +2,45 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>P/Invoke surface of the Rust glue crate (native/rttsh-mcp → rttsh_mcp_native.dll,
-/// built by the BuildRttshNative MSBuild target and shipped flat like lua54.dll). The crate
-/// holds no MCP functionality yet: this is the C#↔Rust foundation the MCP server layer will
-/// build on. Conventions from the interop study: [LibraryImport] source generation, UTF-8,
-/// caller-allocated buffers, status-code errors, panics caught inside the DLL (never
-/// Environment.Exit next to it — see Program's class doc).</summary>
+/// built by the BuildRttshNative MSBuild target and shipped flat like lua54.dll). Conventions
+/// from the interop study: [LibraryImport] source generation, UTF-8, status-code errors,
+/// panics caught inside the DLL (never Environment.Exit next to it - see Program's class doc).
+/// Buffers are caller-allocated (feed/drain); the dispatch response is the one handover - C#
+/// allocates it through <see cref="McpNative.RttshMcpAlloc"/> and Rust frees it.</summary>
 internal static unsafe partial class McpNative
 {
     private const string Library = "rttsh_mcp_native";
 
-    /// <summary>Status ladder — mirrors native/rttsh-mcp/src/lib.rs.</summary>
+    /// <summary>Status ladder - mirrors native/rttsh-mcp/src/lib.rs.</summary>
     public const int Ok = 0;
     public const int ErrInvalidHandle = -1;
-    public const int ErrBufferTooSmall = -2;
-    public const int ErrBadArgument = -3;
-    public const int ErrInternal = -4;   // panic caught inside the DLL
+    public const int ErrBadArgument = -2;
+    public const int ErrInternal = -3;   // panic caught inside the DLL
 
-    /// <summary>Bumped on FFI shape changes; a mismatched DLL fails fast at Start.</summary>
-    public const int AbiVersion = 1;
+    /// <summary>Bumped on FFI shape changes; a mismatched DLL fails fast at Start. v4: the
+    /// dispatch response is handed over by pointer (see <see cref="DispatchHandler"/>).</summary>
+    public const int AbiVersion = 4;
 
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_abi_version")]
     internal static partial int RttshMcpAbiVersion();
 
     /// <summary>Type of the Rust→C# dispatch callback (mirrors <c>DispatchFn</c> in lib.rs):
-    /// <c>extern "system"</c> on the Rust side, <c>unmanaged[Stdcall]</c> here.</summary>
+    /// <c>extern "system"</c> on the Rust side, <c>unmanaged[Stdcall]</c> here; the response
+    /// leaves through the <c>byte**</c>/<c>uint*</c> out-params (see <see cref="DispatchHandler"/>).</summary>
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_start")]
     internal static partial int RttshMcpStart(
-        delegate* unmanaged[Stdcall]<int, byte*, uint, byte*, uint, byte*, uint, uint*, int> dispatch);
+        delegate* unmanaged[Stdcall]<int, byte*, uint, byte*, uint, byte**, uint*, int> dispatch);
+
+    /// <summary>Allocates <paramref name="len"/> bytes with the native crate's allocator, for
+    /// the dispatch trampoline to write a response into and hand over by pointer. Null = the
+    /// allocation failed.</summary>
+    [LibraryImport(Library, EntryPoint = "rttsh_mcp_alloc")]
+    internal static partial IntPtr RttshMcpAlloc(uint len);
 
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_stop")]
     internal static partial int RttshMcpStop(int handle);
@@ -40,11 +48,13 @@ internal static unsafe partial class McpNative
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_feed")]
     internal static partial int RttshMcpFeed(int handle, byte[] data, uint len);
 
-    [LibraryImport(Library, EntryPoint = "rttsh_mcp_pump_step")]
-    internal static partial int RttshMcpPumpStep(int handle);
-
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_drain")]
     internal static partial int RttshMcpDrain(int handle, byte[] buffer, uint cap);
+
+    /// <summary>Blocks up to <paramref name="timeoutMs"/> for server bytes to become
+    /// available; returns the pending byte count (0 = timed out with nothing to drain).</summary>
+    [LibraryImport(Library, EntryPoint = "rttsh_mcp_wait")]
+    internal static partial int RttshMcpWait(int handle, uint timeoutMs);
 
     [LibraryImport(Library, EntryPoint = "rttsh_mcp_dispatch_probe")]
     internal static partial int RttshMcpDispatchProbe(int handle, byte[] method, uint methodLen, byte[] request, uint requestLen);
@@ -53,17 +63,22 @@ internal static unsafe partial class McpNative
     internal static partial int RttshMcpPanicProbe();
 }
 
-/// <summary>Managed callback that executes one (future) tool call. The response buffer
-/// follows the caller-buffer contract: write at most <paramref name="response"/>'s length
-/// and report the written count via <paramref name="written"/>; when it does not fit,
-/// return <see cref="McpNative.ErrBufferTooSmall"/> with <paramref name="written"/> set to
-/// the required size — the Rust side retries with a grown buffer. Any exception thrown
-/// here is caught by the trampoline and surfaces as <see cref="McpNative.ErrInternal"/>.</summary>
-internal delegate int DispatchHandler(int handle, string method, ReadOnlySpan<byte> request, Span<byte> response, out int written);
+/// <summary>Managed callback that executes one MCP tool call and returns its envelope.
+/// Pure compute; the trampoline owns the dispatch gate, the envelope serialization, and
+/// the native-allocation handover. One logical call crosses the boundary exactly once -
+/// no retry, no caching - so non-idempotent tools (connect!) are safe by construction
+/// and identical repeated calls always re-execute. Exceptions thrown here are caught by
+/// the trampoline and surface as <see cref="McpNative.ErrInternal"/>.</summary>
+internal delegate McpEnvelope DispatchHandler(int handle, string method, ReadOnlySpan<byte> request);
+
+/// <summary>The dispatch response envelope; serialized to {"ok":..,"text":..} for Rust.
+/// ok=false makes rmcp report the text as an isError tool result - the message is the
+/// evidence the model sees (Expect's timeout message carries the buffer tail, for one).</summary>
+internal readonly record struct McpEnvelope(bool Ok, string Text);
 
 /// <summary>One native glue session: the handle the Rust registry routes callbacks to, plus
-/// the byte-pump calls (feed / pump-step / drain) the future MCP transport will drive. The
-/// skeleton keeps a session alive only as long as this object is not disposed.</summary>
+/// the MCP byte pump (feed / wait / drain) between the process console and the in-DLL rmcp
+/// server. The session lives exactly as long as this object is not disposed.</summary>
 internal sealed class McpNativeSession : IDisposable
 {
     /// <summary>Routes native callbacks to the owning session. Registered before any call
@@ -75,6 +90,9 @@ internal sealed class McpNativeSession : IDisposable
     private readonly byte[] _drainBuffer = new byte[64 * 1024];
     private readonly int _handle;
     private int _stopped;
+    /// <summary>Serializes tool execution: the J-Link DLL is not thread-safe, and the host
+    /// state (one transport, one runtime, one target lock) is single by design.</summary>
+    private readonly object _dispatchGate = new();
 
     private McpNativeSession(int handle, DispatchHandler handler)
     {
@@ -110,17 +128,6 @@ internal sealed class McpNativeSession : IDisposable
         ThrowOnError(McpNative.RttshMcpFeed(_handle, data, (uint)data.Length), nameof(Feed));
     }
 
-    /// <summary>Moves the inbound queue to the outbound queue (the skeleton's transport
-    /// stand-in); returns the moved byte count.</summary>
-    public int PumpStep()
-    {
-        EnsureRunning();
-        int moved = McpNative.RttshMcpPumpStep(_handle);
-        if (moved < 0)
-            throw Error(moved, nameof(PumpStep));
-        return moved;
-    }
-
     /// <summary>Single drain of up to <paramref name="buffer"/>'s length (server → client
     /// direction); returns the copied count, 0 when the queue is empty.</summary>
     public int Drain(byte[] buffer)
@@ -130,6 +137,17 @@ internal sealed class McpNativeSession : IDisposable
         if (read < 0)
             throw Error(read, nameof(Drain));
         return read;
+    }
+
+    /// <summary>Blocks up to <paramref name="timeoutMs"/> for server output; returns the
+    /// pending byte count (0 = timed out with nothing to drain).</summary>
+    public int Wait(int timeoutMs)
+    {
+        EnsureRunning();
+        int pending = McpNative.RttshMcpWait(_handle, (uint)timeoutMs);
+        if (pending < 0)
+            throw Error(pending, nameof(Wait));
+        return pending;
     }
 
     /// <summary>Drains until the outbound queue is empty.</summary>
@@ -183,7 +201,6 @@ internal sealed class McpNativeSession : IDisposable
         rc switch
         {
             McpNative.ErrInvalidHandle => $"{operation}: native session handle rejected (stopped or unknown)",
-            McpNative.ErrBufferTooSmall => $"{operation}: native response exceeds the size cap",
             McpNative.ErrBadArgument => $"{operation}: native call rejected a null or oversized argument",
             McpNative.ErrInternal => $"{operation}: native internal error (panic caught inside rttsh_mcp_native.dll)",
             _ => $"{operation}: unknown native status {rc} (status ladder mismatch — rebuild native/)",
@@ -191,28 +208,34 @@ internal sealed class McpNativeSession : IDisposable
 
     /// <summary>The Rust→C# trampoline: a static function pointer (per the interop study —
     /// never a delegate, which the native side could collect) routing through the registry.
-    /// Must stay allocation-light and never throw; exceptions map to ErrInternal.</summary>
+    /// Execution + envelope serialization happen under the dispatch gate; the response is
+    /// allocated with the native allocator and handed over by pointer, so one logical call
+    /// crosses the boundary exactly once. Must never throw; exceptions map to
+    /// <see cref="McpNative.ErrInternal"/>.</summary>
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static unsafe int DispatchTrampoline(
         int handle,
         byte* method, uint methodLen,
         byte* request, uint requestLen,
-        byte* resp, uint respCap, uint* respLen)
+        byte** responseOut, uint* responseLen)
     {
-        *respLen = 0;
+        *responseLen = 0;
+        *responseOut = null;
         try
         {
             if (!Registry.TryGetValue(handle, out McpNativeSession? session))
                 return McpNative.ErrInvalidHandle;
-            int rc = session._handler(
-                handle,
-                Encoding.UTF8.GetString(method, checked((int)methodLen)),
-                new ReadOnlySpan<byte>(request, checked((int)requestLen)),
-                new Span<byte>(resp, checked((int)respCap)),
-                out int written);
-            if (rc == McpNative.Ok || rc == McpNative.ErrBufferTooSmall)
-                *respLen = (uint)written;
-            return rc;
+            string methodText = Encoding.UTF8.GetString(method, checked((int)methodLen));
+            byte[] response = session.Answer(handle, methodText, new ReadOnlySpan<byte>(request, checked((int)requestLen)).ToArray());
+            if (response.Length == 0)
+                return McpNative.Ok;
+            byte* buffer = (byte*)McpNative.RttshMcpAlloc((uint)response.Length);
+            if (buffer is null)
+                return McpNative.ErrInternal;
+            response.AsSpan().CopyTo(new Span<byte>(buffer, response.Length));
+            *responseLen = (uint)response.Length;
+            *responseOut = buffer;
+            return McpNative.Ok;
         }
         catch (Exception ex)
         {
@@ -221,4 +244,15 @@ internal sealed class McpNativeSession : IDisposable
             return McpNative.ErrInternal;
         }
     }
+
+    private byte[] Answer(int handle, string method, byte[] request)
+    {
+        lock (_dispatchGate)
+        {
+            return Serialize(_handler(handle, method, request));
+        }
+    }
+
+    private static byte[] Serialize(McpEnvelope envelope) =>
+        JsonSerializer.SerializeToUtf8Bytes(new { ok = envelope.Ok, text = envelope.Text });
 }
