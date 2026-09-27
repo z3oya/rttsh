@@ -67,7 +67,7 @@ public class ManualTests
         string[] keys =
         [
             "chip", "speed", "interface", "rttAddr", "rttRange", "elf", "sn", "channel",
-            "dll", "encoding", "eol", "log", "wait", "scriptTimeout",
+            "encoding", "eol", "log", "wait", "scriptTimeout",
         ];
         foreach (string key in keys)
             Assert.Contains(key, Manual.Text);
@@ -76,9 +76,28 @@ public class ManualTests
     [Fact]
     public void Manual_documents_the_elf_lookup_policy()
     {
-        Assert.Contains("fourteen", Manual.Text);
+        Assert.Contains("thirteen", Manual.Text);
         Assert.Contains("--elf", Manual.Text);
         Assert.Contains("explicit rttAddr wins", Manual.Text);
+    }
+
+    [Fact]
+    public void Manual_documents_the_settings_file()
+    {
+        Assert.Contains("~/.rttsh/settings.json", Manual.Text);
+        Assert.Contains("fromelf", Manual.Text);
+        Assert.Contains("command line > settings.json", Manual.Text);
+        // the retired config.json key points at the new home
+        Assert.Contains("\"dll\" key is rejected", Manual.Text);
+    }
+
+    [Fact]
+    public void Manual_documents_the_elf_flash_conversion()
+    {
+        // why flash download refuses ELF without fromelf: the DLL loader flaw + the fix
+        Assert.Contains("ELF images by section execution addresses", Manual.Text);
+        Assert.Contains("erased flash", Manual.Text);
+        Assert.Contains("--i32combined", Manual.Text);
     }
 
     [Fact]

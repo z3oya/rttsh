@@ -32,6 +32,7 @@ internal sealed class Spec
     public required Option<int?> SerialNo { get; init; }
     public required Option<int?> Channel { get; init; }
     public required Option<string?> Dll { get; init; }
+    public required Option<string?> FromElf { get; init; }
     public required Option<TextEncodingKind?> Encoding { get; init; }
     public required Option<TextEol?> Eol { get; init; }
     public required Option<bool> Hex { get; init; }
@@ -98,7 +99,10 @@ internal static class CliSpec
         Option<int?> channel = IntOption("--channel", "0-15", "channel",
             "RTT up/down channel pair (default 0; selects both the monitored up-channel and the input down-channel)");
         Option<string?> dll = TextOption("--dll", "path", "DLL path",
-            "JLink DLL path (default: auto-detect, incl. SEGGER roots)");
+            "JLink DLL path (default: ~/.rttsh/settings.json 'dll', then auto-detect incl. SEGGER roots)");
+        Option<string?> fromelf = TextOption("--fromelf", "path", "path",
+            "ARM Compiler's fromelf, used by flash download to convert ELF/AXF images to hex " +
+            "(default: ~/.rttsh/settings.json 'fromelf', then PATH and Keil roots)");
         Option<TextEol?> eol = EnumOption("--eol", "lf|cr|crlf|none",
             "line ending appended to text sent by monitor input and send (default lf; --hex send payloads are raw)",
             [("lf", TextEol.Lf), ("cr", TextEol.Cr), ("crlf", TextEol.CrLf), ("none", TextEol.None)],
@@ -148,9 +152,9 @@ internal static class CliSpec
             "flash erase: skip the interactive confirmation (required when stdin is redirected)");
 
         Option[] knownOptions =
-            [chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, eol,
-             encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir, elf,
-             addr, yes];
+            [chip, speed, iff, reset, noReset, rttAddress, rttRange, serialNo, channel, dll, fromelf,
+             eol, encoding, hex, tui, verbose, log, wait, scriptTimeout, filter, config, rootDir,
+             elf, addr, yes];
         var root = new RootCommand("rttsh - SEGGER J-Link RTT terminal");
         foreach (Option option in knownOptions)
             root.Options.Add(option);
@@ -209,7 +213,8 @@ internal static class CliSpec
             "flash download <file> / flash erase: program or erase the target's flash (no RTT link; takes the same per-target lock)");
         Argument<string> flashFile = new("file")
         {
-            Description = "image to program: .hex/.elf/.mot carry their own load addresses; a raw .bin needs --addr",
+            Description = "image to program: .hex/.elf/.mot carry their own load addresses " +
+                          "(ELF/AXF converts via fromelf); a raw .bin needs --addr",
         };
         flashDownloadCommand.Arguments.Add(flashFile);
         flash.Subcommands.Add(flashDownloadCommand);
@@ -254,6 +259,7 @@ internal static class CliSpec
             SerialNo = serialNo,
             Channel = channel,
             Dll = dll,
+            FromElf = fromelf,
             Encoding = encoding,
             Eol = eol,
             Hex = hex,

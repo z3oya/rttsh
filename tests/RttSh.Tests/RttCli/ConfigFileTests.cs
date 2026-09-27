@@ -21,7 +21,6 @@ public class ConfigFileTests
               "elf": "build/app.elf",
               "sn": 12345,
               "channel": 2,
-              "dll": "C:/segger/JLink_x64.dll",
               "encoding": "latin1",
               "eol": "crlf",
               "log": "rtt.log",
@@ -37,7 +36,6 @@ public class ConfigFileTests
         Assert.Equal("build/app.elf", v.Elf);
         Assert.Equal(12345, v.SerialNo);
         Assert.Equal(2, v.Channel);
-        Assert.Equal("C:/segger/JLink_x64.dll", v.DllPath);
         Assert.Equal(TextEncodingKind.Latin1, v.Encoding);
         Assert.Equal(TextEol.CrLf, v.Eol);
         Assert.Equal("rtt.log", v.LogFile);
@@ -56,13 +54,20 @@ public class ConfigFileTests
         Assert.Null(v.RttRange);
         Assert.Null(v.SerialNo);
         Assert.Null(v.Channel);
-        Assert.Null(v.DllPath);
         Assert.Null(v.Encoding);
         Assert.Null(v.Eol);
         Assert.Null(v.LogFile);
         Assert.Null(v.WaitMs);
         Assert.Null(v.ScriptTimeoutMs);
         Assert.Null(v.Elf);
+    }
+
+    [Fact]
+    public void The_retired_dll_key_is_rejected_as_unknown()
+    {
+        // tool paths live in settings.json now
+        var ex = Assert.Throws<UsageException>(() => ConfigFile.Parse("""{ "dll": "C:/segger/JLink_x64.dll" }""", "t.json"));
+        Assert.Contains("unknown key 'dll'", ex.Message);
     }
 
     [Fact]
@@ -245,7 +250,6 @@ public class ConfigFileTests
             RttAddress = 0x20000000,
             SerialNo = 7,
             Channel = 2,
-            DllPath = "a.dll",
             Encoding = TextEncodingKind.Latin1,
             Eol = TextEol.CrLf,
             LogFile = "rtt.log",
@@ -258,7 +262,6 @@ public class ConfigFileTests
         Assert.Equal(0x20000000u, options.RttAddress);
         Assert.Equal(7, options.SerialNo);
         Assert.Equal(2, options.Channel);
-        Assert.Equal("a.dll", options.DllPath);
         Assert.Equal(TextEncodingKind.Latin1, options.Encoding);
         Assert.Equal(TextEol.CrLf, options.Eol);
         Assert.Equal("rtt.log", options.LogFile);

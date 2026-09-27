@@ -55,6 +55,9 @@ internal sealed class CommandLineOptions
     /// <summary>--elf: firmware image (ELF32) to resolve the RTT control-block address from.
     /// Resolved before dispatch (ElfResolver); an explicit RttAddress always wins.</summary>
     public string? ElfPath { get; set; }
+    /// <summary>--fromelf: fromelf for flash download's ELF→hex conversion (FromElf).
+    /// settings.json 'fromelf' fills it when the CLI leaves it unset.</summary>
+    public string? FromElfPath { get; set; }
 
     /// <summary>Encoding for both directions unless --encoding narrowed it (utf8 default).</summary>
     public TextEncodingKind EffectiveEncoding => Encoding ?? TextEncodingKind.Utf8;
@@ -395,6 +398,7 @@ internal static class CommandLine
         ConfigPath = p.GetValue(s.Config),
         RootDir = p.GetValue(s.RootDir),
         ElfPath = p.GetValue(s.Elf),
+        FromElfPath = p.GetValue(s.FromElf),
         Addr = p.GetValue(s.Addr),
         Yes = p.GetValue(s.Yes),
     };

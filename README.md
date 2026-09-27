@@ -54,7 +54,7 @@ An expect timeout is a failure (exit 1), and the error message includes the tail
 
 By default the RTT control-block address is found by scanning RAM from the SDK; `--elf <image>` resolves it from the `_SEGGER_RTT` symbol instead, following rebuilds automatically, with results cached in `.rttsh/elf-cache/`.
 
-Runtime options can be written to `.rttsh/config.json` in the working directory and are loaded automatically (keys: chip, speed, interface, sn, channel, rttAddr, rttRange, elf, dll, encoding, eol, wait, scriptTimeout, log; types and defaults in `rttsh manual`). `-C/--root` switches the base directory; `--log` records session traffic.
+Runtime options can be written to `.rttsh/config.json` in the working directory and are loaded automatically (keys: chip, speed, interface, sn, channel, rttAddr, rttRange, elf, encoding, eol, wait, scriptTimeout, log; types and defaults in `rttsh manual`). Machine-level tool paths live in `~/.rttsh/settings.json` (keys: `dll`, `fromelf`; command line wins; types and details in `rttsh manual`). `-C/--root` switches the base directory; `--log` records session traffic.
 
 ## Commands
 
@@ -63,7 +63,7 @@ Runtime options can be written to `.rttsh/config.json` in the working directory 
 | (no subcommand)         | Interactive RTT terminal                                    |
 | `send <text>`           | Send once, optionally wait for a response                   |
 | `script [<file.lua>]`   | Run a Lua script, or `--eval <code>`                        |
-| `flash download <file>` | Flash hex/elf/mot/bin; raw .bin requires `--addr`           |
+| `flash download <file>` | Flash hex/elf/mot/bin; raw .bin requires `--addr`; ELF/AXF converts via fromelf (`--fromelf` / `~/.rttsh/settings.json`) |
 | `flash erase`           | Chip-wide erase; `--yes` required when stdin is redirected  |
 | `mcp`                   | Run the MCP server over stdio                               |
 | `list-devices`          | List the device database (filter with `--filter`)           |

@@ -3,9 +3,10 @@ using RttSh.Core.Rtt;
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>The flash commands: download one image (DLL-driven erase+program+verify) or erase the
-/// whole chip, then exit. No RTT link is started - the JLinkConnection is deliberately RTT-free
-/// until a transport opens one - but the same per-target TargetLock applies, so a flash run never
-/// races a live rttsh session on the same probe+chip+channel.
+/// whole chip, then exit. ELF/AXF images convert to flat hex via fromelf first (FromElf).
+/// No RTT link is started - the JLinkConnection is deliberately RTT-free until a transport
+/// opens one - but the same per-target TargetLock applies, so a flash run never races a live
+/// rttsh session on the same probe+chip+channel.
 ///
 /// Flow mirrors SendOnce: validate what a bad option would break BEFORE touching the probe
 /// (format/address pairing, erase confirmation), acquire the lock, open, work, close. Failure
@@ -19,39 +20,64 @@ internal static class FlashOnce
         FlashImageFormat format = FlashImage.Sniff(command.FilePath);
         uint address = FlashImage.ValidateAddress(format, command.Options.Addr, command.FilePath);
 
-        RttConnectionConfig config = command.Options.ToConnectionConfig(resetDefault: false);
-        using TargetLock? guard = SessionSupport.AcquireExclusive(config);
-        if (guard is null) return 1;
-
-        using var connection = new JLinkConnection();
-        WireDiagnostics(connection, command.Options.Verbose);
-        if (!OpenOrReport(connection, config)) return 1;
-
+        // ELF/AXF: convert to flat hex before the DLL sees it (FromElf)
+        string flashPath = Path.GetFullPath(command.FilePath);
+        string? tempHex = null;
         try
         {
-            TryHalt(connection, verbose: command.Options.Verbose);
-            SetProgressReporting(connection, "download");
-
-            int flashed = connection.DownloadFile(Path.GetFullPath(command.FilePath), address);
-            connection.SetFlashProgressCallback(null);
-            if (flashed < 0)
+            if (format == FlashImageFormat.Elf)
             {
-                Console.Error.WriteLine($"rttsh: flash download failed (code={flashed}: {JLinkErrors.Describe(flashed)}).");
-                return 1;
+                string? fromElf = FromElf.Resolve(command.Options);
+                if (fromElf is null)
+                    throw new UsageException(FromElf.MissingMessage(command.FilePath));
+                tempHex = FromElf.ConvertToHex(flashPath, fromElf, command.Options.Verbose);
+                flashPath = tempHex;
             }
 
-            Console.WriteLine($"rttsh: flashed '{command.FilePath}' ({format:G}) - done.");
-            if (command.Options.ResetOnConnect == true)
-                connection.ResetAndResume();
-            return 0;
+            RttConnectionConfig config = command.Options.ToConnectionConfig(resetDefault: false);
+            using TargetLock? guard = SessionSupport.AcquireExclusive(config);
+            if (guard is null) return 1;
+
+            using var connection = new JLinkConnection();
+            WireDiagnostics(connection, command.Options.Verbose);
+            if (!OpenOrReport(connection, config)) return 1;
+
+            try
+            {
+                TryHalt(connection, verbose: command.Options.Verbose);
+                SetProgressReporting(connection, "download");
+
+                int flashed = connection.DownloadFile(flashPath, address);
+                connection.SetFlashProgressCallback(null);
+                if (flashed < 0)
+                {
+                    Console.Error.WriteLine($"rttsh: flash download failed (code={flashed}: {JLinkErrors.Describe(flashed)}).");
+                    return 1;
+                }
+
+                string formatNote = tempHex is null
+                    ? $"{format:G}"
+                    : $"{format:G}, converted to hex via fromelf";
+                Console.WriteLine($"rttsh: flashed '{command.FilePath}' ({formatNote}) - done.");
+                if (command.Options.ResetOnConnect == true)
+                    connection.ResetAndResume();
+                return 0;
+            }
+            catch (Exception ex) when (ex is IOException or InvalidOperationException)
+            {
+                // Runtime failures report and exit 1 instead of crashing with a raw stack: the
+                // flash paths throw IOException from every step (reset-halt gate, the optional
+                // exports, the DLL's own codes via the facade).
+                Console.Error.WriteLine($"rttsh: {ex.Message}");
+                return 1;
+            }
         }
-        catch (Exception ex) when (ex is IOException or InvalidOperationException)
+        finally
         {
-            // Runtime failures report and exit 1 instead of crashing with a raw stack: the
-            // flash paths throw IOException from every step (reset-halt gate, the optional
-            // exports, the DLL's own codes via the facade).
-            Console.Error.WriteLine($"rttsh: {ex.Message}");
-            return 1;
+            if (tempHex is not null)
+            {
+                try { File.Delete(tempHex); } catch { /* best effort */ }
+            }
         }
     }
 

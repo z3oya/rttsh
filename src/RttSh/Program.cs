@@ -57,16 +57,18 @@ internal static class Program
             case ListDevicesCommand c:
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                SettingsFile.ApplyTo(c.Options);
                 break;
             case FlashCommand c:
                 PrepareHardwareOptions(c.Options, resolveElf: false);
                 break;
             case McpCommand c:
-                // No chip gates here: chip + validation arrive per connect tool call. Only
-                // the root (relative-path anchor) and the config merge apply, like
-                // list-devices - this command never opens a link itself.
+                // No chip gates here: chip + validation arrive per connect tool call. Only the
+                // root (relative-path anchor) and the config merge apply, like list-devices -
+                // this command never opens a link itself.
                 RttRoot.Apply(c.Options);
                 ConfigFile.ApplyTo(c.Options, c.Options.ConfigPath);
+                SettingsFile.ApplyTo(c.Options);
                 break;
         }
 
@@ -88,14 +90,15 @@ internal static class Program
     }
 
     /// <summary>The shared pre-dispatch preamble of the hardware commands (monitor, send, script,
-    /// flash): root, config merge, then the two chip gates - EnsureChip for presence,
-    /// ChipValidation.EnsureKnown for membership in the DLL device database (an unknown name
-    /// would otherwise reach ExecCommand and open the DLL's modal device-selection dialog) -
-    /// and, for the three RTT commands, the --elf resolution last.</summary>
+    /// flash): root, config merge, settings merge, then the two chip gates - EnsureChip for
+    /// presence, ChipValidation.EnsureKnown for membership in the DLL device database (an
+    /// unknown name would otherwise reach ExecCommand and open the DLL's modal
+    /// device-selection dialog) - and, for the three RTT commands, the --elf resolution last.</summary>
     private static void PrepareHardwareOptions(CommandLineOptions options, bool resolveElf)
     {
         RttRoot.Apply(options);
         ConfigFile.ApplyTo(options, options.ConfigPath);
+        SettingsFile.ApplyTo(options);
         options.EnsureChip();
         ChipValidation.EnsureKnown(options);
         if (resolveElf)

@@ -5,7 +5,7 @@ namespace Toolbox.Tools.RttCli;
 /// carry their own load addresses (the addr argument is ignored by the DLL), so rttsh insists
 /// on the pairing up front - a raw .bin without --addr would land nowhere useful, and an
 /// --addr next to a self-addressed format is almost always a hand-copied mistake the DLL
-/// would silently drop.</summary>
+/// would silently drop. ELF images additionally convert to flat hex via fromelf first (FromElf).</summary>
 internal enum FlashImageFormat { Elf, IntelHex, Srec, Raw }
 
 internal static class FlashImage

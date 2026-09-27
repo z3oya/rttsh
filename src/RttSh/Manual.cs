@@ -24,7 +24,7 @@ internal static class Manual
         -C/--root <dir> runs rttsh as if it had been started in <dir>: the
         implicit ./.rttsh/config.json is looked up there, the --elf parse
         cache lands in <dir>/.rttsh/elf-cache/, and every relative path
-        (elf, log, script, dll, an explicit --config) resolves against
+        (elf, log, script, an explicit --config) resolves against
         <dir>. The directory must exist; a missing config inside it is not
         an error. An explicit -c file beats the root's default file.
 
@@ -43,7 +43,7 @@ internal static class Manual
             "scriptTimeout": 20000
           }
 
-        All keys are optional; the table below lists all fourteen. They
+        All keys are optional; the table below lists all thirteen. They
         mirror the CLI options in camelCase - "interface" is what --help
         spells --if:
 
@@ -58,7 +58,6 @@ internal static class Manual
                          via --elf; explicit rttAddr wins; "" = unset
           sn             probe USB serial number
           channel        RTT up/down channel pair, 0-15 (default 0)
-          dll            JLink DLL path (default: auto-detect; "" = unset)
           encoding       "utf8" | "ascii" | "latin1"
           eol            "lf" | "cr" | "crlf" | "none"
           log            file to append raw received bytes to
@@ -72,13 +71,57 @@ internal static class Manual
         misspelled keys, and unparsable JSON all exit 2 with a
         "--config: ..." message. Five names are rejected even when null -
         hex, tui, reset, filter, config - because they select a mode or
-        name the file itself, so they never belong in saved defaults.
+        name the file itself, so they never belong in saved defaults; the
+        former "dll" key is rejected with a pointer to the settings file
+        (section 2), where tool paths live now.
 
         The file is read by monitor, send, script, flash and list-devices;
         --help, --version and this manual never touch it, so a broken config
         cannot take the reference down.
 
-        2. --ELF: CONTROL-BLOCK LOOKUP FROM A FIRMWARE IMAGE
+        2. GLOBAL SETTINGS (~/.rttsh/settings.json)
+
+        Machine-level tool paths live here, shared by every project -
+        unlike ./.rttsh/config.json, which carries per-project connection
+        defaults. Flat keys, both optional:
+
+          {
+            "dll": "C:\\SEGGER\\JLink\\JLink_x64.dll",
+            "fromelf": "C:\\Keil_v5\\ARM\\ARMCLANG\\bin\\fromelf.exe"
+          }
+
+          dll       JLink DLL path (--dll overrides; when neither is set
+                    the auto-detection runs: PATH, then the SEGGER roots)
+          fromelf   ARM Compiler's fromelf, used by flash download to
+                    convert ELF/AXF images to hex (--fromelf overrides;
+                    when neither is set the discovery runs: PATH, then
+                    the Keil roots - ARMCLANG, ARMCompiler* packs,
+                    ARMCC)
+
+        Strict schema like the config file: unknown keys, wrong types and
+        unparsable JSON exit 2 with a "settings: ..." message. Relative
+        paths resolve against the settings file's own directory, so the
+        same file means the same thing from every working directory. A
+        configured path that does not name an existing file is a hard
+        error - configured intent is never silently second-guessed into
+        auto-detection. Precedence, per key: command line > settings.json
+        > auto-detection.
+
+        Why flash download needs fromelf for ELF/AXF: the J-Link DLL loads
+        ELF images by section execution addresses, which writes the RW
+        data initializers to RAM and never programs their flash load-copy
+        - after reset the firmware starts with .data initialized from
+        erased flash (on-target finding: STM32H743XI + DLL v7.98a, the
+        flashed axf booted with .data = 0xFF and a 255x-fast HAL timebase).
+        rttsh therefore converts ELF/AXF to a flat Intel hex with fromelf
+        first and hands the hex to the DLL's (correct) hex path. Without
+        fromelf, ELF/AXF images are refused with the discovery guidance
+        (exit 2) - flash .hex/.mot/.bin instead, or install/point to
+        fromelf; converting yourself is the same step:
+
+          fromelf --i32combined --output app.hex app.axf
+
+        3. --ELF: CONTROL-BLOCK LOOKUP FROM A FIRMWARE IMAGE
 
         --elf <image> resolves the RTT control-block address from the
         image's _SEGGER_RTT symbol (ELF32), so the address follows every
@@ -121,7 +164,7 @@ internal static class Manual
             hash inside each entry still guards against a same-stamp
             swap. Deleting elf-cache is always safe
 
-        3. SCRIPTING: THE rtt.* API
+        4. SCRIPTING: THE rtt.* API
 
           rtt.send(text)             send text; appends the --eol terminator
           rtt.send_hex("DE AD")      send raw bytes parsed from hex text (byte-exact)
@@ -165,7 +208,7 @@ internal static class Manual
         when the session closes, so a failed run cannot leave the target
         silently dead for the next connection.
 
-        4. WRITING SCRIPTS
+        5. WRITING SCRIPTS
 
         The workhorse is a send/expect pair - send a command, then expect a
         stable substring of the reply. A timeout raises and stops the script
@@ -227,7 +270,7 @@ internal static class Manual
 
           rttsh script --eval 'rtt.send("ping"); rtt.expect("pong", 500)'
 
-        5. MECHANICS
+        6. MECHANICS
 
           - any rtt.* failure is a catchable Lua error carrying the reason
             (pcall); an uncaught error stops the script with exit code 1

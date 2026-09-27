@@ -16,7 +16,6 @@ internal sealed class ConfigValues
     public uint? RttRange { get; set; }
     public int? SerialNo { get; set; }
     public int? Channel { get; set; }
-    public string? DllPath { get; set; }
     public TextEncodingKind? Encoding { get; set; }
     public TextEol? Eol { get; set; }
     public string? LogFile { get; set; }
@@ -77,7 +76,7 @@ internal static class ConfigFile
     }
 
     /// <summary>Layer 2: fills only what the CLI left unset - command-line arguments beat the
-    /// file. Chip/DllPath default to "" rather than null, so "" counts as unset for them.</summary>
+    /// file. Chip defaults to "" rather than null, so "" counts as unset for it.</summary>
     internal static void ApplyTo(CommandLineOptions options, ConfigValues values)
     {
         if (options.Chip.Length == 0 && values.Chip is not null) options.Chip = values.Chip;
@@ -87,7 +86,6 @@ internal static class ConfigFile
         options.RttRange ??= values.RttRange;
         options.SerialNo ??= values.SerialNo;
         options.Channel ??= values.Channel;
-        if (options.DllPath.Length == 0 && values.DllPath is not null) options.DllPath = values.DllPath;
         options.Encoding ??= values.Encoding;
         options.Eol ??= values.Eol;
         options.LogFile ??= values.LogFile;
@@ -133,7 +131,6 @@ internal static class ConfigFile
                     case "rttRange": values.RttRange = Hex(property); break;
                     case "sn": values.SerialNo = Integer(property); break;
                     case "channel": values.Channel = Integer(property); break;
-                    case "dll": values.DllPath = Text(property); break;
                     case "encoding": values.Encoding = Word(property, EncodingWords, "utf8, ascii or latin1"); break;
                     case "eol": values.Eol = Word(property, EolWords, "lf, cr, crlf or none"); break;
                     case "log": values.LogFile = Text(property); break;

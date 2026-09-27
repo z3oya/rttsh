@@ -54,7 +54,7 @@ expect 超时即失败（exit 1），错误信息附接收缓冲区尾部，可�
 
 RTT 控制块地址默认由 SDK 扫描 RAM 得出；`--elf <镜像>` 改为从 `_SEGGER_RTT` 符号解析，随重编译自动更新，结果缓存在 `.rttsh/elf-cache/`。
 
-运行参数可写入工作目录下的 `.rttsh/config.json`，自动加载（键：chip、speed、interface、sn、channel、rttAddr、rttRange、elf、dll、encoding、eol、wait、scriptTimeout、log，类型与默认值见 `rttsh manual`）。`-C/--root` 切换运行基准目录；`--log` 记录会话收发。
+运行参数可写入工作目录下的 `.rttsh/config.json`，自动加载（键：chip、speed、interface、sn、channel、rttAddr、rttRange、elf、encoding、eol、wait、scriptTimeout、log，类型与默认值见 `rttsh manual`）。机器级工具路径放 `~/.rttsh/settings.json`（键：`dll`、`fromelf`；命令行优先，详见 `rttsh manual`）。`-C/--root` 切换运行基准目录；`--log` 记录会话收发。
 
 ## 命令
 
@@ -63,7 +63,7 @@ RTT 控制块地址默认由 SDK 扫描 RAM 得出；`--elf <镜像>` 改为从 
 | （无子命令）                  | 交互式 RTT 终端                             |
 | `send <text>`           | 发送一次，可选等待应答                            |
 | `script [<file.lua>]`   | 运行 Lua 脚本，或 `--eval <代码>`              |
-| `flash download <file>` | 烧录 hex/elf/mot/bin；raw .bin 需 `--addr` |
+| `flash download <file>` | 烧录 hex/elf/mot/bin；raw .bin 需 `--addr`；ELF/AXF 经 fromelf 转换（`--fromelf` / `~/.rttsh/settings.json`） |
 | `flash erase`           | 整片擦除；重定向 stdin 时需 `--yes`              |
 | `mcp`                   | 以 stdio 运行 MCP 服务器                     |
 | `list-devices`          | 列出设备数据库（`--filter` 过滤）                 |

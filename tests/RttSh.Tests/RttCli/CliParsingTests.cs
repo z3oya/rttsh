@@ -335,6 +335,7 @@ public class CliParsingTests
         [
             "--rtt-range", "0x1000", "--sn", "42", "--wait", "500", "--script-timeout", "1000",
             "--log", "out.bin", "--dll", @"C:\JLink\JLink_x64.dll",
+            "--fromelf", @"C:\Keil_v5\ARM\ARMCLANG\bin\fromelf.exe",
         ]));
         Assert.Equal(0x1000u, command.Options.RttRange);
         Assert.Equal(42, command.Options.SerialNo);
@@ -342,6 +343,7 @@ public class CliParsingTests
         Assert.Equal(1000, command.Options.ScriptTimeoutMs);
         Assert.Equal("out.bin", command.Options.LogFile);
         Assert.Equal(@"C:\JLink\JLink_x64.dll", command.Options.DllPath);
+        Assert.Equal(@"C:\Keil_v5\ARM\ARMCLANG\bin\fromelf.exe", command.Options.FromElfPath);
     }
 
     [Fact]
