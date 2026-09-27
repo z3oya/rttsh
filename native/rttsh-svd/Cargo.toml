@@ -1,0 +1,11 @@
+[package]
+name = "rttsh-svd"
+version.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+svd-parser = { version = "=0.14.10", features = ["expand"] }
+svd-rs = "=0.14.13"

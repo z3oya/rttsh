@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device schemaVersion="1.3" xmlns:xs="http://www.w3.org/2001/XMLSchema-instance" xs:noNamespaceSchemaLocation="CMSIS-SVD.xsd">
+  <vendor>rttsh test</vendor>
+  <name>TEST</name>
+  <description>ST-style minimal fixture: device-level property inheritance and the
+    field-fallback defense path</description>
+  <cpu>
+    <name>CM4</name>
+    <revision>r0p1</revision>
+    <endian>little</endian>
+    <mpuPresent>false</mpuPresent>
+    <fpuPresent>true</fpuPresent>
+    <nvicPrioBits>4</nvicPrioBits>
+    <vendorSystickConfig>false</vendorSystickConfig>
+  </cpu>
+  <addressUnitBits>8</addressUnitBits>
+  <width>32</width>
+  <size>32</size>
+  <access>read-write</access>
+  <resetValue>0x12345678</resetValue>
+  <resetMask>0xFFFFFFFF</resetMask>
+  <peripherals>
+    <peripheral>
+      <name>P</name>
+      <description>Inheritance unit</description>
+      <baseAddress>0x40003000</baseAddress>
+      <registers>
+        <register>
+          <name>R1</name>
+          <description>Inherits the device resetValue; no own access/size</description>
+          <addressOffset>0x0</addressOffset>
+          <fields>
+            <field><name>F1</name><bitOffset>0</bitOffset><bitWidth>2</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>R2</name>
+          <description>Clear-on-read register whose field carries no own properties</description>
+          <addressOffset>0x4</addressOffset>
+          <readAction>clear</readAction>
+          <fields>
+            <field><name>F2</name><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>
