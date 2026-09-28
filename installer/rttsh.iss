@@ -2,7 +2,7 @@
 ; Build via installer\build-installer.ps1 (dotnet publish + ISCC)
 
 #define MyAppName "rttsh"
-#define MyAppVersion "0.3.3"
+#define MyAppVersion "0.3.4"
 #define MyAppPublisher "rttsh"
 
 ; Flavor is passed in by build-installer.ps1 (/DFlavor=...); default for manual compiles.
