@@ -4,5 +4,6 @@
     <!-- Rust glue crate (native/): shared paths for the build target and the DLL copies. -->
     <RttshNativeDir>$(MSBuildThisFileDirectory)native\</RttshNativeDir>
     <RttshNativeDll>$(RttshNativeDir)target\release\rttsh_mcp_native.dll</RttshNativeDll>
+    <RttshElfNativeDll>$(RttshNativeDir)target\release\rttsh_elf_native.dll</RttshElfNativeDll>
   </PropertyGroup>
 </Project>

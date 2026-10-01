@@ -4,9 +4,9 @@ namespace Toolbox.Tests;
 
 /// <summary>Synthetic ELF32 builder for the Elf submodule tests: emits a minimal but fully
 /// valid image (ELF header, the sections you declare, optional .symtab/.dynsym, .shstrtab) so
-/// every branch of the parser can be exercised without real firmware. Pure byte assembly - no
-/// ELFSharp involvement, so parser failures cannot be masked by builder failures. Tests declare
-/// everything explicitly; there are no implicit sections or symbols.
+/// every branch of the parser can be exercised without real firmware. Pure byte assembly,
+/// independent of the code under test - parser failures cannot be masked by builder failures.
+/// Tests declare everything explicitly; there are no implicit sections or symbols.
 ///
 /// Symbols are given as raw ELF encodings (type/bind nibbles) to keep the builder independent
 /// of the module's own enums: a mis-mapping in ElfImage then shows up as a test failure instead

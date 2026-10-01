@@ -1,7 +1,3 @@
-using ELFSharp;
-using ELFSharp.ELF;
-using ELFSharp.ELF.Sections;
-
 namespace RttSh.Core.Rtt.Elf;
 
 /// <summary>Load outcome, mirroring the CLI's error ladder. IO failures are deliberately NOT
@@ -28,10 +24,12 @@ public sealed record ElfSection(
 
 /// <summary>Read-only ELF32 image over our own types: symbols, section lookup, and a status
 /// that mirrors the CLI's error ladder (NotElf / UnsupportedClass / ParseFailed) so callers can
-/// degrade without catching. Load never throws; symbol and section metadata are materialized
-/// eagerly while section contents are sliced from the image bytes on request. The library stays
-/// an implementation detail: no ELFSharp type is reachable from the public surface (enforced by
-/// the ElfNoLeakTests reflection test), and nothing outlives Load except our own records.
+/// degrade without catching. Thin facade over the Rust ELF crate (native/rttsh-elf, via
+/// <see cref="ElfNative"/>): parsing, the load ladder, symbol lookup and the control-block
+/// locate live in the native model behind a SafeHandle; this class materializes the records
+/// the public surface exposes and keeps the image bytes for section-content slicing. Load
+/// never throws for image problems; symbol and section records are materialized eagerly while
+/// section contents are sliced from the image bytes on request.
 ///
 /// Scope decisions baked in: ELF64 is rejected (UnsupportedClass) per project decision;
 /// big-endian images parse fine (symbol reads are endian-agnostic); only SHT_SYMTAB is read -
@@ -39,27 +37,27 @@ public sealed record ElfSection(
 /// null symbol, STT_SECTION with st_name=0) are not resolvable and not listed.</summary>
 public sealed class ElfImage
 {
-    private static readonly byte[] Magic = [0x7f, (byte)'E', (byte)'L', (byte)'F'];
-
     private readonly byte[] _imageBytes;
-    private readonly Dictionary<string, List<ElfSymbol>> _symbolsByName;
     private readonly Dictionary<string, ElfSection> _sectionsByName;
+    private readonly ElfNativeHandle? _native;
 
-    private ElfImage(byte[] imageBytes, IReadOnlyList<ElfSymbol> symbols, IReadOnlyList<ElfSection> sections, bool isLittleEndian)
+    private ElfImage(byte[] imageBytes, ElfNativeParseResult parsed)
     {
         _imageBytes = imageBytes;
+        _native = parsed.Handle;
         Status = ElfLoadStatus.Ok;
         FailureReason = "";
-        IsLittleEndian = isLittleEndian;
-        Symbols = symbols;
-        Sections = sections;
-        _sectionsByName = sections
+        IsLittleEndian = parsed.IsLittleEndian;
+        Symbols = parsed.Materialization!.Symbols
+            .Select(s => new ElfSymbol(s.Name, s.Address, s.Size, (ElfSymbolKind)s.Kind, (ElfSymbolBinding)s.Binding))
+            .ToArray();
+        Sections = parsed.Materialization.Sections
+            .Select(s => new ElfSection(s.Name, s.Address, s.Size, s.FileOffset, s.HasContents))
+            .ToArray();
+        _sectionsByName = Sections
             .Where(s => s.Name.Length > 0)
             .GroupBy(s => s.Name)
             .ToDictionary(g => g.Key, g => g.First());   // duplicate section names: first match wins
-        _symbolsByName = symbols
-            .GroupBy(s => s.Name)
-            .ToDictionary(g => g.Key, g => g.OrderBy(s => s.Address).ToList());
     }
 
     private ElfImage(ElfLoadStatus status, string failureReason)
@@ -71,66 +69,24 @@ public sealed class ElfImage
         Sections = [];
         _imageBytes = [];
         _sectionsByName = [];
-        _symbolsByName = [];
     }
 
-    /// <summary>Parses an in-memory image. Never throws: any structural problem becomes a
-    /// Status with a reason in <see cref="FailureReason"/>.</summary>
-    public static ElfImage Load(byte[] bytes)
+    /// <summary>Parses an in-memory image. Never throws for image problems: any structural
+    /// issue becomes a Status with a reason in <see cref="FailureReason"/>. The magic and
+    /// class-byte checks run in the native parser before anything else, so a class byte of 2
+    /// is reported as out-of-scope even when the rest is garbage.</summary>
+    public static ElfImage Load(byte[]? bytes)
     {
-        if (bytes is null || bytes.Length < Magic.Length || !bytes.AsSpan(0, Magic.Length).SequenceEqual(Magic))
-            return new ElfImage(ElfLoadStatus.NotElf, "not an ELF image (bad \\x7fELF magic)");
-        if (bytes.Length < 16)
-            return new ElfImage(ElfLoadStatus.ParseFailed, "malformed ELF: truncated before the class field");
-
-        // EI_CLASS: 1 = ELF32, 2 = ELF64. Checked before the library sees the bytes so a
-        // class byte of 2 is reported as out-of-scope even when the rest is garbage.
-        switch (bytes[4])
-        {
-            case 1: break;
-            case 2: return new ElfImage(ElfLoadStatus.UnsupportedClass, "ELF64 images are out of scope (ELF32 only)");
-            default: return new ElfImage(ElfLoadStatus.ParseFailed, $"malformed ELF: invalid EI_CLASS {bytes[4]}");
-        }
-
-        IELF elf;
-        using (var stream = new MemoryStream(bytes, writable: false))
-        {
-            // The bool stays positional: ELFSharp 2.17.3's second parameter is not what you'd
-            // guess from "leaveOpen", and false is safe under either reading.
-            try
-            {
-                elf = ELFReader.Load(stream, false);
-            }
-            catch (Exception ex)
-            {
-                return new ElfImage(ElfLoadStatus.ParseFailed, $"malformed ELF: {FirstLine(ex.Message)}");
-            }
-        }
-
-        if (elf.Class != Class.Bit32)
-            return new ElfImage(ElfLoadStatus.UnsupportedClass, "ELF64 images are out of scope (ELF32 only)");
-
-        try
-        {
-            return Materialize(bytes, (ELF<uint>)elf);
-        }
-        catch (Exception ex)
-        {
-            return new ElfImage(ElfLoadStatus.ParseFailed, $"malformed ELF: {FirstLine(ex.Message)}");
-        }
+        ElfNativeParseResult parsed = ElfNative.Parse(bytes);
+        return parsed.Status == ElfLoadStatus.Ok
+            ? new ElfImage(bytes ?? [], parsed)
+            : new ElfImage(parsed.Status, parsed.Reason);
     }
 
     /// <summary>Reads a file and parses it. IO failures (missing path, unreadable) propagate to
     /// the caller as exceptions - they are usage errors, not image problems; only the bytes'
     /// content is reported through Status.</summary>
     public static ElfImage FromFile(string path) => Load(File.ReadAllBytes(path));
-
-    /// <summary>Rebuilds an Ok image from parts a previous Load materialized and ElfImageCache
-    /// persisted. Callers vouch that the bytes and the metadata belong together - the cache
-    /// proves that with its stored content hash before handing them over.</summary>
-    public static ElfImage FromMaterialized(byte[] imageBytes, IReadOnlyList<ElfSymbol> symbols,
-        IReadOnlyList<ElfSection> sections, bool isLittleEndian)
-        => new(imageBytes, symbols, sections, isLittleEndian);
 
     public ElfLoadStatus Status { get; }
     public string FailureReason { get; }
@@ -145,21 +101,14 @@ public sealed class ElfImage
     /// <summary>Looks a symbol up by exact name, optionally restricted to one kind. Kind
     /// filtering runs BEFORE the uniqueness check, so a FUNC and an OBJECT sharing a name do
     /// not look ambiguous to an OBJECT-only query (the RTT control-block path relies on this -
-    /// GCC ships symbols like memmove twice, and ARM mapping symbols share names wholesale).</summary>
+    /// GCC ships symbols like memmove twice, and ARM mapping symbols share names wholesale).
+    /// The semantics live in the native crate; the status guard here keeps failed images
+    /// answer-only-NotFound without crossing the FFI boundary.</summary>
     public SymbolLookup Lookup(string name, ElfSymbolKind? kind = null)
     {
         if (Status != ElfLoadStatus.Ok || string.IsNullOrEmpty(name))
             return SymbolLookup.NotFound();
-        if (!_symbolsByName.TryGetValue(name, out var matches))
-            return SymbolLookup.NotFound();
-        if (kind is { } wanted)
-            matches = matches.Where(s => s.Kind == wanted).ToList();
-        return matches.Count switch
-        {
-            0 => SymbolLookup.NotFound(),
-            1 => SymbolLookup.Found(matches[0]),
-            _ => SymbolLookup.Ambiguous(matches),
-        };
+        return ElfNative.Lookup(_native!, name, kind);
     }
 
     /// <summary>Fetches the raw bytes of a PROGBITS section by name - a slice of the image
@@ -188,63 +137,7 @@ public sealed class ElfImage
         return false;
     }
 
-    private static ElfImage Materialize(byte[] bytes, ELF<uint> elf)
-    {
-        bool littleEndian = elf.Endianess == Endianess.LittleEndian;
-
-        var sections = new List<ElfSection>();
-        SymbolTable<uint>? symtab = null;
-        foreach (var raw in elf.Sections.OfType<Section<uint>>())
-        {
-            if (raw.Name.Length > 0)
-                sections.Add(new ElfSection(raw.Name, raw.LoadAddress, raw.Size, raw.Offset, raw.Type == SectionType.ProgBits));
-            if (symtab is null && raw.Type == SectionType.SymbolTable)
-                symtab = raw as SymbolTable<uint>;
-        }
-
-        var symbols = new List<ElfSymbol>();
-        if (symtab is not null)
-        {
-            foreach (var entry in symtab.Entries)
-            {
-                if (string.IsNullOrEmpty(entry.Name))
-                    continue;   // null symbol, STT_SECTION with st_name=0, and any other unnamed entry
-                symbols.Add(new ElfSymbol(
-                    entry.Name,
-                    entry.Value,
-                    entry.Size,
-                    MapKind(entry.Type),
-                    MapBinding(entry.Binding)));
-            }
-        }
-        symbols.Sort((a, b) => a.Address.CompareTo(b.Address));
-        return new ElfImage(bytes, symbols, sections, littleEndian);
-    }
-
-    private static ElfSymbolKind MapKind(SymbolType type) => type switch
-    {
-        SymbolType.Object => ElfSymbolKind.Object,
-        SymbolType.Function => ElfSymbolKind.Function,
-        SymbolType.Section => ElfSymbolKind.Section,
-        SymbolType.File => ElfSymbolKind.File,
-        SymbolType.NotSpecified => ElfSymbolKind.NotTyped,
-        _ => ElfSymbolKind.Other,
-    };
-
-    private static ElfSymbolBinding MapBinding(SymbolBinding binding) => binding switch
-    {
-        SymbolBinding.Global => ElfSymbolBinding.Global,
-        SymbolBinding.Local => ElfSymbolBinding.Local,
-        SymbolBinding.Weak => ElfSymbolBinding.Weak,
-        _ => ElfSymbolBinding.Other,
-    };
-
-    /// <summary>Library exception texts can be long multi-line dumps; the reason string stays
-    /// one line so a future CLI warning reads cleanly.</summary>
-    private static string FirstLine(string text)
-    {
-        int cut = text.IndexOfAny(['\r', '\n']);
-        string line = cut < 0 ? text : text[..cut];
-        return line.Length == 0 ? "parser failed" : line.Trim();
-    }
+    /// <summary>The native model handle; only meaningful for an Ok image (callers guard on
+    /// Status first - RttControlBlock.LocateFromElf composes its InvalidImage reasons there).</summary>
+    internal ElfNativeHandle NativeHandle => _native!;
 }

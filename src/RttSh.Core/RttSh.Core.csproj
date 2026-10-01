@@ -6,12 +6,15 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>RttSh.Core</RootNamespace>
+    <!-- ElfNative's [LibraryImport] surface generates unsafe marshaling stubs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
+  <!-- The Elf submodule goes through the Rust glue crate (native/rttsh-elf →
+       rttsh_elf_native.dll, shipped by the RttSh build target); this project has
+       no package references. -->
   <ItemGroup>
-    <!-- The only package dependency of Core: the Elf submodule wraps it completely - ELFSharp
-         types never appear in Core's public surface. -->
-    <PackageReference Include="ELFSharp" Version="2.17.3" />
+    <InternalsVisibleTo Include="rttsh.tests" />
   </ItemGroup>
 
 </Project>

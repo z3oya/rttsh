@@ -24,11 +24,6 @@ public class ElfResolverTests
         return path;
     }
 
-    /// <summary>Fresh per-test cache root: Apply-level tests must never litter the runner's
-    /// working directory with ./.rttsh, and a fresh root pins every test on the miss path
-    /// unless it deliberately warms the cache first.</summary>
-    private static string TempCacheRoot() => Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
-
     // ---- red: the CLI surface ----------------------------------------------------------
 
     [Fact]
@@ -135,7 +130,7 @@ public class ElfResolverTests
         string path = TempFile("elf-resolver-green.elf", ImageWithCb());
         var options = new CommandLineOptions { Chip = "STM32H743XI", ElfPath = path, RttRange = 0x100 };
 
-        ElfResolver.Apply(options, TempCacheRoot());
+        ElfResolver.Apply(options);
 
         Assert.Equal(ElfTestSupport.KeilCbAddress, options.RttAddress);
         Assert.Null(options.RttRange);
@@ -152,7 +147,7 @@ public class ElfResolverTests
             RttAddress = 0x2000_0000,
         };
 
-        ElfResolver.Apply(options, TempCacheRoot());
+        ElfResolver.Apply(options);
 
         Assert.Equal(0x2000_0000u, options.RttAddress);
     }
@@ -161,7 +156,7 @@ public class ElfResolverTests
     public void Apply_without_elf_is_a_silent_noop()
     {
         var options = new CommandLineOptions { Chip = "STM32H743XI" };
-        ElfResolver.Apply(options, TempCacheRoot());
+        ElfResolver.Apply(options);
         Assert.Null(options.RttAddress);
     }
 
@@ -173,7 +168,7 @@ public class ElfResolverTests
             Chip = "STM32H743XI",
             ElfPath = Path.Combine(Path.GetTempPath(), "elf-resolver-no-such-image.elf"),
         };
-        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options, TempCacheRoot()));
+        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options));
         Assert.Contains("--elf: cannot read", ex.Message);
     }
 
@@ -182,7 +177,7 @@ public class ElfResolverTests
     {
         string path = TempFile("elf-resolver-junk.bin", [1, 2, 3, 4, 5, 6, 7, 8]);
         var options = new CommandLineOptions { Chip = "STM32H743XI", ElfPath = path };
-        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options, TempCacheRoot()));
+        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options));
         Assert.Contains("--elf: cannot use", ex.Message);
         Assert.Contains("magic", ex.Message);
     }
@@ -192,23 +187,8 @@ public class ElfResolverTests
     {
         string path = TempFile("elf-resolver-64.elf", new ElfBuilder { Elf64Header = true }.Build());
         var options = new CommandLineOptions { Chip = "STM32H743XI", ElfPath = path };
-        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options, TempCacheRoot()));
+        UsageException ex = Assert.Throws<UsageException>(() => ElfResolver.Apply(options));
         Assert.Contains("ELF64", ex.Message);
-    }
-
-    [Fact]
-    public void Apply_files_its_parse_under_the_cache_root()
-    {
-        string cacheRoot = TempCacheRoot();
-        string path = TempFile("elf-resolver-cached.elf", ImageWithCb());
-        var options = new CommandLineOptions { Chip = "STM32H743XI", ElfPath = path };
-
-        ElfResolver.Apply(options, cacheRoot);
-
-        Assert.Equal(ElfTestSupport.KeilCbAddress, options.RttAddress);
-        string[] entries = Directory.GetFiles(Path.Combine(cacheRoot, ".rttsh", "elf-cache"), "*.json");
-        Assert.Single(entries);
-        Assert.Contains(CbName, File.ReadAllText(entries[0]));
     }
 
     // ---- config merge: "elf" is an ordinary fourteenth key ------------------------------

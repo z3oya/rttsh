@@ -43,6 +43,8 @@ public static class RttControlBlock
     /// with the sName field, 20 bytes in legacy ones). 64 is the smallest legal block: one up
     /// and one down buffer in the legacy layout. Zero-buffer (24) or oversized sizes fail the
     /// plausibility gate - a wrong-build image should fail here with a nameable reason.
+    /// The policy ladder lives in the native ELF crate (native/rttsh-elf); this side
+    /// owns only the null/non-Ok guards and their reason strings.
     ///
     /// Deliberately no section-containment gate: a custom linker script may place the block in
     /// an unusual (but valid) section, and a cross-build mismatch is caught later by reading
@@ -55,32 +57,6 @@ public static class RttControlBlock
         if (image.Status != ElfLoadStatus.Ok)
             return new RttElfLocateResult(RttElfLocateStatus.InvalidImage, 0, $"cannot resolve {ControlBlockSymbolName}: {image.FailureReason}");
 
-        SymbolLookup lookup = image.Lookup(ControlBlockSymbolName, ElfSymbolKind.Object);
-        switch (lookup.Status)
-        {
-            case SymbolLookupStatus.NotFound:
-                return new RttElfLocateResult(RttElfLocateStatus.SymbolMissing, 0,
-                    $"{ControlBlockSymbolName} not in the symbol table (firmware built without RTT, " +
-                    "or the image is stripped); fall back to the SDK RAM scan");
-            case SymbolLookupStatus.Ambiguous:
-                string candidates = string.Join(", ", lookup.Candidates.Select(c => $"0x{c.Address:X}"));
-                return new RttElfLocateResult(RttElfLocateStatus.Ambiguous, 0,
-                    $"ambiguous {ControlBlockSymbolName}: {lookup.Candidates.Count} OBJECT candidates at {candidates}");
-        }
-
-        lookup.TryGetSymbol(out ElfSymbol cb);
-        ulong size = cb.Size;
-        ulong body = size >= 24 ? size - 24 : 0;
-        if (size < 64 || (body % 24 != 0 && body % 20 != 0))
-        {
-            return new RttElfLocateResult(RttElfLocateStatus.ImplausibleSize, 0,
-                $"implausible {ControlBlockSymbolName} size {size} (control block is 16+2*4 bytes plus " +
-                "20- or 24-byte buffer descriptors) - image likely from a different build");
-        }
-
-        uint address = (uint)cb.Address;
-        return new RttElfLocateResult(RttElfLocateStatus.Resolved, address,
-            $"resolved {ControlBlockSymbolName} at 0x{address:X} (size {size}); " +
-            "verify the \"SEGGER RTT\" ID on target before trusting it");
+        return ElfNative.Locate(image.NativeHandle);
     }
 }

@@ -260,7 +260,7 @@ internal sealed class McpToolHost : IDisposable
             explicitAddress: null,
             explicitRange: false,
             elfPath,
-            () => ElfImageCache.Load(elfPath, Path.Combine(Environment.CurrentDirectory, ConfigFile.DirName, "elf-cache")));
+            () => ElfImage.FromFile(elfPath));
         // Fallbacks degrade to the SDK RAM scan exactly like the CLI (a note, not an error);
         // file-level problems throw UsageException and surface as tool errors.
         return decision.Override ? (decision.Address, decision.Message) : (0, decision.Message);

@@ -13,8 +13,8 @@ public sealed class RttRootCollection;
 /// <summary>-C/--root: the option's parse surface and the RttRoot.Apply mechanics over real
 /// directories. Apply mutates the process working directory, so every test saves and restores
 /// it - and the end-to-end tests prove the payoff contracts: the implicit config is picked
-/// up from <root>/.rttsh/, and the elf parse cache lands in <root>/.rttsh/elf-cache even
-/// though the process was started elsewhere.</summary>
+/// up from <root>/.rttsh/, and a relative --elf resolves against <root> even though the
+/// process was started elsewhere.</summary>
 [Collection("RttRoot")]
 public class RttRootTests
 {
@@ -210,7 +210,7 @@ public class RttRootTests
     }
 
     [Fact]
-    public void The_elf_cache_lands_under_the_root()
+    public void A_relative_elf_path_resolves_under_the_root()
     {
         string saved = Environment.CurrentDirectory;
         try
@@ -224,11 +224,9 @@ public class RttRootTests
 
             var options = new CommandLineOptions { RootDir = root, ElfPath = "fw.elf" };
             RttRoot.Apply(options);
-            ElfResolver.Apply(options);   // cacheRoot defaults to the (moved) working directory
+            ElfResolver.Apply(options);
 
             Assert.Equal(0x2400_0070u, options.RttAddress);
-            string[] entries = Directory.GetFiles(Path.Combine(root, ".rttsh", "elf-cache"), "*.json");
-            Assert.Single(entries);
         }
         finally
         {
