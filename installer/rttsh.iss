@@ -2,7 +2,7 @@
 ; Build via installer\build-installer.ps1 (dotnet publish + ISCC)
 
 #define MyAppName "rttsh"
-#define MyAppVersion "0.3.4"
+#define MyAppVersion "0.3.5"
 #define MyAppPublisher "rttsh"
 
 ; Flavor is passed in by build-installer.ps1 (/DFlavor=...); default for manual compiles.
@@ -35,8 +35,8 @@ Source: "publish\App\rttsh.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\rttsh.deps.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\rttsh.runtimeconfig.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\rttsh.core.dll"; DestDir: "{app}"; Flags: ignoreversion
-; ELF reader behind RTT symbol resolution (--elf)
-Source: "publish\App\ELFSharp.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Rust ELF glue behind RTT symbol resolution (--elf): parse, lookup, control-block locate
+Source: "publish\App\rttsh_elf_native.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Lua binding for the script subcommand: NLua -> KeraLua -> native lua54
 Source: "publish\App\NLua.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "publish\App\KeraLua.dll"; DestDir: "{app}"; Flags: ignoreversion

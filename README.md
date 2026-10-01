@@ -52,7 +52,7 @@ The full suite lives in `examples/stm32/Tests` (23 scripts, a real target board 
 
 An expect timeout is a failure (exit 1), and the error message includes the tail of the receive buffer so the firmware's actual response is visible right in the failure. The `rtt.*` API also covers binary transfer and target memory access (`rtt.mem_read`/`rtt.mem_write`).
 
-By default the RTT control-block address is found by scanning RAM from the SDK; `--elf <image>` resolves it from the `_SEGGER_RTT` symbol instead, following rebuilds automatically, with results cached in `.rttsh/elf-cache/`.
+By default the RTT control-block address is found by scanning RAM from the SDK; `--elf <image>` resolves it from the `_SEGGER_RTT` symbol instead, following rebuilds automatically.
 
 Runtime options can be written to `.rttsh/config.json` in the working directory and are loaded automatically (keys: chip, speed, interface, sn, channel, rttAddr, rttRange, elf, encoding, eol, wait, scriptTimeout, log; types and defaults in `rttsh manual`). Machine-level tool paths live in `~/.rttsh/settings.json` (keys: `dll`, `fromelf`; command line wins; types and details in `rttsh manual`). `-C/--root` switches the base directory; `--log` records session traffic.
 

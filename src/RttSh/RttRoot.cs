@@ -2,11 +2,10 @@ namespace Toolbox.Tools.RttCli;
 
 /// <summary>-C/--root: run as if the process had been started in the given directory. Applied
 /// right before the config merge, it moves Environment.CurrentDirectory, which is the one
-/// anchor every downstream path already hangs off: the implicit ./.rttsh/config.json pickup,
-/// the --elf parse cache home (<root>/.rttsh/elf-cache) and the resolution of every relative
-/// path on the command line (elf, log, script, dll, an explicit --config too). git -C
-/// semantics, deliberately nothing narrower - half-anchored paths are how config files stop
-/// meaning the same thing twice.
+/// anchor every downstream path already hangs off: the implicit ./.rttsh/config.json pickup
+/// and the resolution of every relative path on the command line (elf, log, script, dll, an
+/// explicit --config too). git -C semantics, deliberately nothing narrower - half-anchored
+/// paths are how config files stop meaning the same thing twice.
 ///
 /// The directory must exist (a typo must not silently run unconfigured); a missing config
 /// inside it is still fine. A relative --root value resolves against the caller's real

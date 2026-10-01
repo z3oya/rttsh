@@ -22,11 +22,11 @@ internal static class Manual
         when a key repeats, the last occurrence wins.
 
         -C/--root <dir> runs rttsh as if it had been started in <dir>: the
-        implicit ./.rttsh/config.json is looked up there, the --elf parse
-        cache lands in <dir>/.rttsh/elf-cache/, and every relative path
-        (elf, log, script, an explicit --config) resolves against
-        <dir>. The directory must exist; a missing config inside it is not
-        an error. An explicit -c file beats the root's default file.
+        implicit ./.rttsh/config.json is looked up there, and every
+        relative path (elf, log, script, an explicit --config) resolves
+        against <dir>. The directory must exist; a missing config inside
+        it is not an error. An explicit -c file beats the root's default
+        file.
 
           {
             "chip": "STM32H743XI",
@@ -158,11 +158,6 @@ internal static class Manual
               or stripped); falling back to the SDK RAM scan
           - file-level problems are usage errors (exit 2): a missing
             path, a file that is not an ELF image, an ELF64 image
-          - parses are cached under ./.rttsh/elf-cache/, next to the
-            config file (./.rttsh/config.json), and reused while the
-            image's size and modification time are unchanged; a content
-            hash inside each entry still guards against a same-stamp
-            swap. Deleting elf-cache is always safe
 
         4. SCRIPTING: THE rtt.* API
 

@@ -8,7 +8,7 @@ namespace Toolbox.Tools.RttCli;
 /// metadata; it is disposable state, and the tolerant reader below already turns any future
 /// format drift into an empty history rather than an error.
 ///
-/// Same degradation ladder as ElfImageCache: a missing, corrupt, wrongly-typed or
+/// A missing, corrupt, wrongly-typed or
 /// null-carrying file is a miss (a fresh empty history, rewritten at save), and an
 /// unwritable location silently skips the write - persistence can only change recall, never
 /// behavior. Lines holding chars a session could never have produced (control chars, DEL) are
@@ -20,7 +20,7 @@ namespace Toolbox.Tools.RttCli;
 /// previous or the new file, never a torn one (last writer wins the content).</summary>
 internal static class TuiHistoryFile
 {
-    /// <summary>Lives next to the config file and the elf cache (ConfigFile.DirName), so
+    /// <summary>Lives next to the config file (ConfigFile.DirName), so
     /// -C/--root anchors it the same way.</summary>
     public const string FileName = "tui-history.json";
 
