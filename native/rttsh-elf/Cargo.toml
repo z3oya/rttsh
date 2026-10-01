@@ -1,0 +1,14 @@
+[package]
+name = "rttsh-elf"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+# cdylib: rttsh_elf_native.dll for the C# facade (ElfNative.cs); rlib: the domain
+# layer stays testable from cargo test without touching the FFI surface. The lib
+# name fixes the DLL file name the P/Invoke surface resolves.
+name = "rttsh_elf_native"
+crate-type = ["cdylib", "rlib"]
+
+[lints]
+workspace = true
