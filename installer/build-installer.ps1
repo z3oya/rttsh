@@ -15,8 +15,8 @@ $installerDir = $PSScriptRoot
 $repoRoot = Split-Path -Parent $installerDir
 
 $flavor = "framework"
-# -r win-x64 on BOTH flavors promotes rid-specific assets (native lua54) flat
-# into the output root, so {app} carries no runtimes\ tree.
+# -r win-x64 produces the apphost exe and keeps the layout flat; the native glue
+# DLLs (rttsh_*_native.dll) arrive via Content items, so {app} carries no runtimes\ tree.
 $publishArgs = @("-r", "win-x64", "--self-contained", "false", "-p:DebugType=none")
 if ($SelfContained) {
     $flavor = "selfcontained"

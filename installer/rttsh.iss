@@ -37,10 +37,8 @@ Source: "publish\App\rttsh.runtimeconfig.json"; DestDir: "{app}"; Flags: ignorev
 Source: "publish\App\rttsh.core.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Rust ELF glue behind RTT symbol resolution (--elf): parse, lookup, control-block locate
 Source: "publish\App\rttsh_elf_native.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Lua binding for the script subcommand: NLua -> KeraLua -> native lua54
-Source: "publish\App\NLua.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\App\KeraLua.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "publish\App\lua54.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Lua hosting for the script subcommand: Lua 5.4 (via mlua) statically linked inside
+Source: "publish\App\rttsh_lua_native.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Rust MCP glue (rttsh mcp): the rmcp server runs inside this DLL, tool execution in managed code
 Source: "publish\App\rttsh_mcp_native.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; CLI parser (managed, no native parts). Its localized satellites (cs\ de\ ...)
