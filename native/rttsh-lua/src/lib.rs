@@ -22,7 +22,7 @@
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use mlua::Lua;
+use mlua::{Error, Lua};
 
 /// Status ladder, mirrored by the C# side in `LuaNative.cs`.
 pub const OK: i32 = 0;
@@ -36,6 +36,17 @@ pub const ERR_INTERNAL: i32 = -3;
 /// into a Lua error carrying that message.
 pub const CB_OK: i32 = 0;
 pub const CB_ERR: i32 = 1;
+
+/// do_string's *kind_out: the chunk ran (KIND_OK), failed with a message
+/// (KIND_ERROR), or unwound on the rtt.exit sentinel (KIND_EXIT, with the
+/// parsed code). Only meaningful when the export returned OK.
+pub const KIND_OK: i32 = 0;
+pub const KIND_ERROR: i32 = 1;
+pub const KIND_EXIT: i32 = 2;
+
+/// The rtt.exit sentinel the shim raises as `error("__rtt_exit=<code>", 0)`;
+/// classify parses it from the error's first line.
+pub const EXIT_SENTINEL: &str = "__rtt_exit=";
 
 /// Bumped when the FFI surface changes shape; the C# facade refuses to run
 /// against a mismatched DLL.
@@ -105,6 +116,160 @@ fn guard<T>(f: impl FnOnce() -> T) -> Result<T, i32> {
 #[no_mangle]
 pub extern "C" fn rttsh_lua_abi_version() -> i32 {
     ABI_VERSION
+}
+
+/// Turns an owned byte vector into an exactly-sized leaked allocation — the
+/// discipline behind alloc/handover: capacity == len lets free reconstruct the
+/// dealloc layout precisely (same shape as the elf blob).
+fn leak_vec(bytes: Vec<u8>) -> *mut u8 {
+    let boxed = bytes.into_boxed_slice();
+    let ptr = boxed.as_ptr() as *mut u8;
+    std::mem::forget(boxed);
+    ptr
+}
+
+/// Allocates exactly `len` bytes with this crate's allocator, for the C# side
+/// to hand strings/values over by pointer; the DLL frees after conversion.
+/// Null means the allocation failed (treated as "no value" by the caller).
+#[no_mangle]
+pub extern "C" fn rttsh_lua_alloc(len: usize) -> *mut u8 {
+    guard(|| leak_vec(vec![0u8; len])).unwrap_or(std::ptr::null_mut())
+}
+
+/// Frees an exactly-sized allocation from [`rttsh_lua_alloc`] (or a handover
+/// received from an export). Null is a no-op.
+///
+/// # Safety
+/// `ptr` must come from `rttsh_lua_alloc` or an export handover and must still
+/// be owned by the caller.
+#[no_mangle]
+pub unsafe extern "C" fn rttsh_lua_free(ptr: *mut u8, len: usize) {
+    if !ptr.is_null() {
+        let _ = guard(|| {
+            unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len))) };
+            OK
+        });
+    }
+}
+
+/// Copies `len` bytes from `ptr` into an owned String (lossy UTF-8 — scripts
+/// only ever produce valid UTF-8; lossy keeps a stray byte from aborting a run).
+///
+/// # Safety
+/// `ptr` must be readable for `len` bytes and must not be mutated during the call.
+unsafe fn host_string(ptr: *const u8, len: usize) -> String {
+    if ptr.is_null() || len == 0 {
+        return String::new();
+    }
+    unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).into_owned() }
+}
+
+/// Copies `text` into a fresh exactly-sized allocation and hands it over by
+/// pointer (the caller frees through [`rttsh_lua_free`]). An empty text hands
+/// over null/0 — the C# side treats that as "no message".
+///
+/// # Safety
+/// Both out-pointers must be writable.
+unsafe fn handover(out: *mut *mut u8, out_len: *mut usize, text: &str) {
+    if text.is_empty() {
+        unsafe {
+            *out = std::ptr::null_mut();
+            *out_len = 0;
+        }
+        return;
+    }
+    let ptr = leak_vec(text.as_bytes().to_vec());
+    unsafe {
+        *out = ptr;
+        *out_len = text.len();
+    }
+}
+
+/// Flattens an mlua error into (kind, exit code, message). CallbackError is
+/// mlua's wrapper around conversion failures inside Rust callbacks — the cause
+/// carries the real message. mlua appends the Lua stack traceback to runtime
+/// error messages, so the `__rtt_exit=` sentinel is parsed from the first
+/// line; the traceback stays in the message for diagnostics (NLua's
+/// LuaException also carried it, and the script-facing tests only pin
+/// substrings).
+fn classify(e: &Error) -> (i32, i64, String) {
+    let (kind, code, msg) = match e {
+        Error::SyntaxError { message, .. } => (KIND_ERROR, 0, message.clone()),
+        Error::RuntimeError(msg) => (KIND_ERROR, 0, msg.clone()),
+        Error::CallbackError { cause, .. } => return classify(cause),
+        other => (KIND_ERROR, 0, other.to_string()),
+    };
+    let first = msg.lines().next().unwrap_or("");
+    if let Some(rest) = first.strip_prefix(EXIT_SENTINEL) {
+        if let Ok(code) = rest.parse::<i64>() {
+            return (KIND_EXIT, code, msg);
+        }
+    }
+    (kind, code, msg)
+}
+
+/// Loads and runs one chunk with a name (Lua conventions: "@path" renders
+/// errors as "path:line", "=eval" as "eval:line"). On success *kind_out is
+/// KIND_OK. A script failure yields KIND_ERROR with the message handed over
+/// via msg_out (freed by the caller through [`rttsh_lua_free`]); the rtt.exit
+/// sentinel yields KIND_EXIT with the code in *code_out. The out-params are
+/// only meaningful when the return is OK.
+///
+/// # Safety
+/// `src`/`chunk` must be readable for their lengths and the out-pointers
+/// writable; `handle` must come from `rttsh_lua_create`, be live, and all
+/// calls on it stay on the one script thread (single-owner handle).
+#[no_mangle]
+pub unsafe extern "C" fn rttsh_lua_do_string(
+    handle: usize,
+    src: *const u8,
+    src_len: usize,
+    chunk: *const u8,
+    chunk_len: usize,
+    kind_out: *mut i32,
+    code_out: *mut i64,
+    msg_out: *mut *mut u8,
+    msg_len_out: *mut usize,
+) -> i32 {
+    if handle == 0
+        || src.is_null()
+        || chunk.is_null()
+        || kind_out.is_null()
+        || code_out.is_null()
+        || msg_out.is_null()
+        || msg_len_out.is_null()
+    {
+        return ERR_BAD_ARGUMENT;
+    }
+    unsafe {
+        *kind_out = KIND_OK;
+        *code_out = 0;
+        *msg_out = std::ptr::null_mut();
+        *msg_len_out = 0;
+    }
+    let source = unsafe { host_string(src, src_len) };
+    let chunk_name = unsafe { host_string(chunk, chunk_len) };
+    guard(|| {
+        // SAFETY: checked above — handle is nonzero and owned by the caller
+        // (the C# host vouches it is live and script-thread-confined).
+        let lua = unsafe { &*(handle as *const Lua) };
+        match lua.load(source.as_bytes()).set_name(chunk_name).exec() {
+            Ok(()) => {
+                unsafe { *kind_out = KIND_OK };
+                OK
+            }
+            Err(e) => {
+                let (kind, code, msg) = classify(&e);
+                unsafe {
+                    *kind_out = kind;
+                    *code_out = code;
+                    handover(msg_out, msg_len_out, &msg);
+                }
+                OK
+            }
+        }
+    })
+    .unwrap_or(ERR_INTERNAL)
 }
 
 /// Creates a Lua 5.4 state with the standard libraries and returns a nonzero
@@ -198,5 +363,122 @@ mod tests {
     #[test]
     fn destroy_rejects_zero() {
         assert_eq!(unsafe { rttsh_lua_destroy(0) }, ERR_BAD_ARGUMENT);
+    }
+
+    /// Runs one do_string round and flattens (rc, kind, code, message), freeing
+    /// the handed-over message the way the C# side will.
+    fn run_chunk(handle: usize, source: &str, chunk: &str) -> (i32, i32, i64, String) {
+        let (src, name) = (source.as_bytes(), chunk.as_bytes());
+        let mut kind = 0i32;
+        let mut code = 0i64;
+        let mut msg: *mut u8 = std::ptr::null_mut();
+        let mut msg_len = 0usize;
+        let rc = unsafe {
+            rttsh_lua_do_string(
+                handle,
+                src.as_ptr(),
+                src.len(),
+                name.as_ptr(),
+                name.len(),
+                &mut kind,
+                &mut code,
+                &mut msg,
+                &mut msg_len,
+            )
+        };
+        let message = if msg.is_null() {
+            String::new()
+        } else {
+            let text = unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(msg, msg_len)).into_owned() };
+            unsafe { rttsh_lua_free(msg, msg_len) };
+            text
+        };
+        (rc, kind, code, message)
+    }
+
+    fn with_state(f: impl FnOnce(usize)) {
+        let vtable = stub_vtable();
+        let handle = unsafe { rttsh_lua_create(vtable.ctx, &*vtable) };
+        assert_ne!(handle, 0);
+        f(handle);
+        assert_eq!(unsafe { rttsh_lua_destroy(handle) }, OK);
+    }
+
+    #[test]
+    fn successful_chunk_yields_kind_ok_and_no_message() {
+        with_state(|h| {
+            let (rc, kind, code, msg) = run_chunk(h, "return 1", "=t");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_OK);
+            assert_eq!(code, 0);
+            assert!(msg.is_empty());
+        });
+    }
+
+    #[test]
+    fn syntax_error_carries_the_chunk_name() {
+        with_state(|h| {
+            let (rc, kind, code, msg) = run_chunk(h, "this is not lua", "@script.lua");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert_eq!(code, 0);
+            assert!(msg.contains("script.lua"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn runtime_error_carries_position_and_message() {
+        with_state(|h| {
+            let (rc, kind, _, msg) = run_chunk(h, "error('boom')", "@script.lua");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("script.lua:1:"), "got: {msg}");
+            assert!(msg.contains("boom"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn exit_sentinel_unwinds_as_kind_exit_with_the_code() {
+        with_state(|h| {
+            let (rc, kind, code, msg) = run_chunk(h, "error('__rtt_exit=42', 0)", "@script.lua");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_EXIT);
+            assert_eq!(code, 42);
+            assert!(msg.contains("__rtt_exit=42"), "got: {msg}"); // kept for diagnostics
+        });
+    }
+
+    #[test]
+    fn sentinel_text_mid_message_stays_an_error() {
+        with_state(|h| {
+            // position prefix lands before the sentinel text, so only a
+            // first-line sentinel counts as an exit
+            let (rc, kind, code, msg) = run_chunk(h, "error('boom __rtt_exit=9', 1)", "@script.lua");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert_eq!(code, 0);
+            assert!(msg.contains("boom"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn do_string_rejects_null_arguments() {
+        with_state(|h| {
+            let src = b"return 1";
+            let mut kind = 0i32;
+            let mut code = 0i64;
+            let mut msg: *mut u8 = std::ptr::null_mut();
+            let mut msg_len = 0usize;
+            unsafe {
+                assert_eq!(
+                    rttsh_lua_do_string(h, std::ptr::null(), src.len(), src.as_ptr(), src.len(), &mut kind, &mut code, &mut msg, &mut msg_len),
+                    ERR_BAD_ARGUMENT
+                );
+                assert_eq!(
+                    rttsh_lua_do_string(h, src.as_ptr(), src.len(), src.as_ptr(), src.len(), std::ptr::null_mut(), &mut code, &mut msg, &mut msg_len),
+                    ERR_BAD_ARGUMENT
+                );
+            }
+        });
     }
 }
