@@ -22,7 +22,7 @@
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use mlua::{Error, Lua};
+use mlua::{Error, Lua, Value};
 
 /// Status ladder, mirrored by the C# side in `LuaNative.cs`.
 pub const OK: i32 = 0;
@@ -95,6 +95,166 @@ pub struct HostVTable {
     pub resume: unsafe extern "C" fn(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
 }
 
+/// Copyable view of the vtable handed to `rttsh_lua_create`, captured by every
+/// HOST_* closure. The C# host guarantees single-thread use, matching mlua's
+/// non-Send Lua.
+#[derive(Clone, Copy)]
+struct Host(*const HostVTable);
+
+/// Converts and frees a buffer the C# callback handed over through its
+/// out-pair (the failure message, or the string value for wait/expect).
+///
+/// # Safety
+/// `ptr` must come from the callback's out-pair and still be owned by the caller.
+unsafe fn take_handover(ptr: *mut u8, len: usize) -> String {
+    if ptr.is_null() || len == 0 {
+        return String::new();
+    }
+    let text = unsafe { String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len)).into_owned() };
+    unsafe { free(ptr, len) };
+    text
+}
+
+/// The shim's second return for status-style entries: the message on failure,
+/// nil on success.
+fn msg_or_nil(lua: &Lua, st: i32, msg: &str) -> mlua::Result<Value> {
+    if st == CB_ERR {
+        Ok(Value::String(lua.create_string(msg)?))
+    } else {
+        Ok(Value::Nil)
+    }
+}
+
+/// Registers the shim's HOST_* globals backed by `host`. The shim (run by the
+/// C# host right after create) wraps these into the rtt table and turns
+/// CB_ERR statuses into script-facing errors.
+fn register_host(lua: &Lua, host: Host) -> mlua::Result<()> {
+    let globals = lua.globals();
+
+    globals.set(
+        "HOST_send",
+        lua.create_function(move |lua, text: String| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).send)((*host.0).ctx, text.as_ptr(), text.len(), &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_send_hex",
+        lua.create_function(move |lua, hex: String| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).send_hex)((*host.0).ctx, hex.as_ptr(), hex.len(), &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_log",
+        lua.create_function(move |lua, line: String| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).log)((*host.0).ctx, line.as_ptr(), line.len(), &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_now",
+        lua.create_function(move |_, ()| Ok(unsafe { ((*host.0).now)((*host.0).ctx) }))?,
+    )?;
+
+    globals.set(
+        "HOST_sleep",
+        lua.create_function(move |lua, ms: i32| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).sleep)((*host.0).ctx, ms, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_is_halted",
+        lua.create_function(move |lua, ()| {
+            let (st, halted, ptr, len) = unsafe {
+                let mut out: i32 = 0;
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).is_halted)((*host.0).ctx, &mut out, &mut msg, &mut msg_len);
+                (st, out, msg, msg_len)
+            };
+            if st == CB_OK {
+                return Ok((st, Value::Boolean(halted != 0)));
+            }
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, Value::String(lua.create_string(msg)?)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_halt",
+        lua.create_function(move |lua, ()| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).halt)((*host.0).ctx, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_resume",
+        lua.create_function(move |lua, ()| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).resume)((*host.0).ctx, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_exit",
+        lua.create_function(move |lua, code: i64| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).exit)((*host.0).ctx, code, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    Ok(())
+}
+
 /// Every export body runs under `guard`: a panic anywhere becomes
 /// [`ERR_INTERNAL`] instead of crossing the FFI boundary. The panic text goes
 /// to stderr.
@@ -145,11 +305,14 @@ pub extern "C" fn rttsh_lua_alloc(len: usize) -> *mut u8 {
 #[no_mangle]
 pub unsafe extern "C" fn rttsh_lua_free(ptr: *mut u8, len: usize) {
     if !ptr.is_null() {
-        let _ = guard(|| {
-            unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len))) };
-            OK
-        });
+        let _ = guard(|| unsafe { free(ptr, len) });
     }
+}
+
+/// # Safety
+/// `ptr` must come from a `leak_vec` allocation and still be owned by the caller.
+unsafe fn free(ptr: *mut u8, len: usize) {
+    unsafe { drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(ptr, len))) };
 }
 
 /// Copies `len` bytes from `ptr` into an owned String (lossy UTF-8 — scripts
@@ -284,7 +447,14 @@ pub unsafe extern "C" fn rttsh_lua_create(_ctx: *mut c_void, vtable: *const Host
     if vtable.is_null() {
         return 0;
     }
-    guard(|| Box::into_raw(Box::new(Lua::new())) as usize).unwrap_or(0)
+    match guard(|| {
+        let lua = Lua::new();
+        register_host(&lua, Host(vtable)).map_err(|_| ERR_INTERNAL)?;
+        Ok::<usize, i32>(Box::into_raw(Box::new(lua)) as usize)
+    }) {
+        Ok(Ok(handle)) => handle,
+        _ => 0,
+    }
 }
 
 /// Destroys a handle from [`rttsh_lua_create`]; the handle is dead afterwards.
@@ -305,41 +475,247 @@ pub unsafe extern "C" fn rttsh_lua_destroy(handle: usize) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::sync::Mutex;
+
     use super::*;
 
-    // One stub per distinct vtable signature. They exist to prove the declared
-    // field types compile; later rounds replace them with recording mocks.
-    unsafe extern "C" fn s_str(_: *mut c_void, _: *const u8, _: usize, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
+    // Value-entry stubs — replaced by recording mocks when those trampolines
+    // land; here they only prove the declared field types compile.
     unsafe extern "C" fn s_wait(_: *mut c_void, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
     unsafe extern "C" fn s_expect(_: *mut c_void, _: *const u8, _: usize, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_now(_: *mut c_void) -> f64 { 0.0 }
-    unsafe extern "C" fn s_sleep(_: *mut c_void, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_exit(_: *mut c_void, _: i64, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
     unsafe extern "C" fn s_mem_read(_: *mut c_void, _: i64, _: i64, _: i32, _: *mut *mut i64, _: *mut usize, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
     unsafe extern "C" fn s_mw_one(_: *mut c_void, _: i64, _: i64, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
     unsafe extern "C" fn s_mw_table(_: *mut c_void, _: i64, _: *const i64, _: usize, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_halted(_: *mut c_void, _: *mut i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_void(_: *mut c_void, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
 
-    fn stub_vtable() -> Box<HostVTable> {
+    /// Test fixture mirroring the shim the C# host installs (the production
+    /// copy lives in LuaScriptHost.cs from the flip round on — keep in sync;
+    /// the C# host tests pin the shared behavior). Entries whose HOST_* global
+    /// does not exist yet fail only if a test calls them.
+    const SHIM: &str = r#"
+local function protect(fn)
+    return function(...)
+        local ok, res = pcall(fn, ...)
+        if not ok then error(res, 2) end
+        return res
+    end
+end
+local function floor_arg(v, message)
+    local n = tonumber(v)
+    if n == nil then error(message, 0) end
+    return math.floor(n)
+end
+rtt = {
+    send = protect(function(text)
+        local st, msg = HOST_send(text)
+        if st ~= 0 then error(msg, 0) end
+    end),
+    send_hex = protect(function(hex)
+        local st, msg = HOST_send_hex(hex)
+        if st ~= 0 then error(msg, 0) end
+    end),
+    log = protect(function(line)
+        local st, msg = HOST_log(tostring(line))
+        if st ~= 0 then error(msg, 0) end
+    end),
+    wait = protect(function(ms)
+        if ms == nil then error('wait: missing timeout in ms', 0) end
+        local st, res = HOST_wait(math.floor(ms))
+        if st ~= 0 then error(res, 0) end
+        return res
+    end),
+    wait_hex = protect(function(ms)
+        if ms == nil then error('wait_hex: missing timeout in ms', 0) end
+        local st, res = HOST_wait_hex(math.floor(ms))
+        if st ~= 0 then error(res, 0) end
+        return res
+    end),
+    expect = protect(function(pattern, timeoutMs)
+        if pattern == nil then error('expect: missing pattern', 0) end
+        local st, res = HOST_expect(pattern, math.floor(timeoutMs or 1000))
+        if st ~= 0 then error(res, 0) end
+        return res
+    end),
+    now = protect(function() return HOST_now() end),
+    sleep = protect(function(ms)
+        local st, msg = HOST_sleep(math.floor(tonumber(ms) or 0))
+        if st ~= 0 then error(msg, 0) end
+    end),
+    exit = function(code)
+        local n = math.floor(tonumber(code) or 0)
+        local st, msg = HOST_exit(n)
+        if st ~= 0 then error(msg, 0) end
+        error('__rtt_exit=' .. n, 0)
+    end,
+    mem_read = protect(function(addr, count, width)
+        if addr == nil then error('mem_read: missing address', 0) end
+        if count == nil then error('mem_read: missing count', 0) end
+        local w = width == nil and 32 or floor_arg(width, 'mem_read: width must be a number')
+        local st, res = HOST_mem_read(floor_arg(addr, 'mem_read: address must be a number'),
+                                     floor_arg(count, 'mem_read: count must be a number'), w)
+        if st ~= 0 then error(res, 0) end
+        return res
+    end),
+    mem_write = protect(function(addr, values, width)
+        if addr == nil then error('mem_write: missing address', 0) end
+        if values == nil then error('mem_write: missing value(s)', 0) end
+        local a = floor_arg(addr, 'mem_write: address must be a number')
+        local w = width == nil and 32 or floor_arg(width, 'mem_write: width must be a number')
+        if type(values) == 'table' then
+            local n = #values
+            if n == 0 then return end
+            local copy = {}
+            for i = 1, n do
+                local v = tonumber(values[i])
+                if v == nil then error('mem_write: value #' .. i .. ' is not a number', 0) end
+                copy[i] = math.floor(v)
+            end
+            local st, msg = HOST_mem_write_table(a, copy, n, w)
+            if st ~= 0 then error(msg, 0) end
+            return
+        end
+        local st, msg = HOST_mem_write_one(a, floor_arg(values, 'mem_write: value must be a number or table'), w)
+        if st ~= 0 then error(msg, 0) end
+    end),
+    is_halted = protect(function()
+        local st, v = HOST_is_halted()
+        if st ~= 0 then error(v, 0) end
+        return v
+    end),
+    halt = protect(function()
+        local st, msg = HOST_halt()
+        if st ~= 0 then error(msg, 0) end
+    end),
+    resume = protect(function()
+        local st, msg = HOST_resume()
+        if st ~= 0 then error(msg, 0) end
+    end),
+}
+"#;
+
+    /// Recording mock the tests route callbacks through.
+    struct MockCtx {
+        sent: Mutex<Vec<String>>,
+        log: Mutex<Vec<String>>,
+        slept: Mutex<Vec<i32>>,
+        control: Mutex<Vec<&'static str>>,
+        now_ms: Cell<f64>,
+        exit_code: Cell<i64>,
+        halted: Cell<i32>,
+        /// When armed, every status-style entry fails with this message —
+        /// exercises the CB_ERR → shim error path.
+        fail: Cell<Option<&'static str>>,
+    }
+
+    impl MockCtx {
+        fn new() -> Self {
+            Self {
+                sent: Mutex::new(Vec::new()),
+                log: Mutex::new(Vec::new()),
+                slept: Mutex::new(Vec::new()),
+                control: Mutex::new(Vec::new()),
+                now_ms: Cell::new(12.5),
+                exit_code: Cell::new(0),
+                halted: Cell::new(0),
+                fail: Cell::new(None),
+            }
+        }
+
+        /// Hands over the armed failure message, or reports success.
+        fn fail_or(&self, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+            match self.fail.get() {
+                Some(m) => {
+                    unsafe { handover(msg, msg_len, m) };
+                    CB_ERR
+                }
+                None => CB_OK,
+            }
+        }
+    }
+
+    unsafe extern "C" fn mock_send(ctx: *mut c_void, text: *const u8, len: usize, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.sent.lock().unwrap().push(unsafe { host_string(text, len) });
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_send_hex(ctx: *mut c_void, hex: *const u8, len: usize, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.sent.lock().unwrap().push(unsafe { host_string(hex, len) });
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_log(ctx: *mut c_void, line: *const u8, len: usize, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.log.lock().unwrap().push(unsafe { host_string(line, len) });
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_now(ctx: *mut c_void) -> f64 {
+        unsafe { (*(ctx as *const MockCtx)).now_ms.get() }
+    }
+
+    unsafe extern "C" fn mock_sleep(ctx: *mut c_void, ms: i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.slept.lock().unwrap().push(ms);
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_exit(ctx: *mut c_void, code: i64, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.exit_code.set(code);
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_is_halted(ctx: *mut c_void, out: *mut i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        let st = c.fail_or(msg, msg_len);
+        if st == CB_OK {
+            unsafe { *out = c.halted.get() };
+        }
+        st
+    }
+
+    unsafe extern "C" fn mock_halt(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.control.lock().unwrap().push("halt");
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_resume(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.control.lock().unwrap().push("resume");
+        c.fail_or(msg, msg_len)
+    }
+
+    fn mock_vtable(ctx: &MockCtx) -> Box<HostVTable> {
         Box::new(HostVTable {
-            ctx: std::ptr::null_mut(),
-            send: s_str,
-            send_hex: s_str,
-            log: s_str,
+            ctx: ctx as *const MockCtx as *mut c_void,
+            send: mock_send,
+            send_hex: mock_send_hex,
+            log: mock_log,
             wait: s_wait,
             wait_hex: s_wait,
             expect: s_expect,
-            now: s_now,
-            sleep: s_sleep,
-            exit: s_exit,
+            now: mock_now,
+            sleep: mock_sleep,
+            exit: mock_exit,
             mem_read: s_mem_read,
             mem_write_one: s_mw_one,
             mem_write_table: s_mw_table,
-            is_halted: s_halted,
-            halt: s_void,
-            resume: s_void,
+            is_halted: mock_is_halted,
+            halt: mock_halt,
+            resume: mock_resume,
         })
+    }
+
+    fn with_mock(f: impl FnOnce(&MockCtx, usize)) {
+        let ctx = MockCtx::new();
+        let vtable = mock_vtable(&ctx);
+        let handle = unsafe { rttsh_lua_create(vtable.ctx, &*vtable) };
+        assert_ne!(handle, 0);
+        f(&ctx, handle);
+        assert_eq!(unsafe { rttsh_lua_destroy(handle) }, OK);
     }
 
     #[test]
@@ -354,10 +730,7 @@ mod tests {
 
     #[test]
     fn create_destroy_roundtrip() {
-        let vtable = stub_vtable();
-        let handle = unsafe { rttsh_lua_create(vtable.ctx, &*vtable) };
-        assert_ne!(handle, 0);
-        assert_eq!(unsafe { rttsh_lua_destroy(handle) }, OK);
+        with_mock(|_, handle| assert_ne!(handle, 0));
     }
 
     #[test]
@@ -397,11 +770,15 @@ mod tests {
     }
 
     fn with_state(f: impl FnOnce(usize)) {
-        let vtable = stub_vtable();
-        let handle = unsafe { rttsh_lua_create(vtable.ctx, &*vtable) };
-        assert_ne!(handle, 0);
-        f(handle);
-        assert_eq!(unsafe { rttsh_lua_destroy(handle) }, OK);
+        with_mock(|_, handle| f(handle));
+    }
+
+    /// Installs the shim then runs `script` as @script.lua (the host's Run shape).
+    fn run_script(handle: usize, script: &str) -> (i32, i32, i64, String) {
+        let (rc, kind, _, msg) = run_chunk(handle, SHIM, "=shim");
+        assert_eq!(rc, OK, "shim do_string infra failure");
+        assert_eq!(kind, KIND_OK, "shim failed: {msg}");
+        run_chunk(handle, script, "@script.lua")
     }
 
     #[test]
@@ -479,6 +856,68 @@ mod tests {
                     ERR_BAD_ARGUMENT
                 );
             }
+        });
+    }
+
+    #[test]
+    fn simple_apis_roundtrip_through_the_shim() {
+        with_mock(|ctx, h| {
+            ctx.halted.set(1);
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "rtt.send('x') rtt.log('y') rtt.sleep(5) rtt.halt() \
+                 local halted = rtt.is_halted() rtt.resume() \
+                 rtt.log(tostring(halted)) rtt.log(rtt.now())",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.sent.lock().unwrap(), vec!["x"]);
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["y", "true", "12.5"]);
+            assert_eq!(*ctx.slept.lock().unwrap(), vec![5]);
+            assert_eq!(*ctx.control.lock().unwrap(), vec!["halt", "resume"]);
+        });
+    }
+
+    #[test]
+    fn exit_unwinds_with_the_code_and_stops_the_script() {
+        with_mock(|ctx, h| {
+            let (rc, kind, code, msg) = run_script(h, "rtt.send('a') rtt.exit(42) rtt.send('b')");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_EXIT, "{msg}");
+            assert_eq!(code, 42);
+            assert_eq!(ctx.exit_code.get(), 42);
+            assert_eq!(*ctx.sent.lock().unwrap(), vec!["a"]); // 'b' never runs
+        });
+    }
+
+    #[test]
+    fn pcalld_exit_is_swallowed_but_still_recorded() {
+        with_mock(|ctx, h| {
+            let (rc, kind, _, msg) = run_script(h, "pcall(rtt.exit, 7) rtt.send('after')");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(ctx.exit_code.get(), 7);
+            assert_eq!(*ctx.sent.lock().unwrap(), vec!["after"]);
+        });
+    }
+
+    #[test]
+    fn host_failure_status_surfaces_as_a_script_error() {
+        with_mock(|ctx, h| {
+            ctx.fail.set(Some("mock failure"));
+            // caught by pcall through protect: message + caller position survive;
+            // re-raised with error() (not a status-style callback) for observation
+            let (rc, kind, _, msg) = run_script(h, "local ok, err = pcall(function() rtt.send('x') end) error(err, 0)");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("mock failure"), "got: {msg}");
+            assert!(msg.contains("script.lua:1:"), "got: {msg}");
+            // uncaught direct call: the same classification at the top level
+            let (rc, kind, _, msg) = run_script(h, "rtt.send('x')");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("mock failure"), "got: {msg}");
+            assert!(msg.contains("script.lua:1:"), "got: {msg}");
         });
     }
 }
