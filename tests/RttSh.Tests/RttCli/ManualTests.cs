@@ -11,9 +11,15 @@ public class ManualTests
     [InlineData("wait")]
     [InlineData("wait_hex")]
     [InlineData("expect")]
+    [InlineData("try_expect")]
+    [InlineData("expect_absent")]
+    [InlineData("expect_any")]
+    [InlineData("read_line")]
+    [InlineData("flush")]
     [InlineData("now")]
     [InlineData("sleep")]
     [InlineData("exit")]
+    [InlineData("set_timeout")]
     [InlineData("mem_read")]
     [InlineData("mem_write")]
     [InlineData("is_halted")]
@@ -36,8 +42,9 @@ public class ManualTests
     [Fact]
     public void Manual_documents_the_advancing_scan_model()
     {
-        Assert.Contains("scans forward from the end of the last match", Manual.Text);
-        Assert.Contains("consumed text is never re-matched", Manual.Text);
+        Assert.Contains("scans forward", Manual.Text);
+        Assert.Contains("consumed text is", Manual.Text);
+        Assert.Contains("never re-matched", Manual.Text);
     }
 
     [Fact]
@@ -134,14 +141,21 @@ public class ManualTests
     [Fact]
     public void Manual_documents_the_capture_idiom_and_its_pitfall()
     {
-        Assert.Contains("r:match(\"#(%d+)\")", Manual.Text);
+        Assert.Contains("local t, m, id = rtt.expect(", Manual.Text);
         Assert.Contains("tonumber(\"#18\") is nil", Manual.Text);
     }
 
     [Fact]
-    public void Manual_shows_a_negative_assertion_with_pcall()
+    public void Manual_shows_a_negative_assertion_with_expect_absent()
     {
-        Assert.Contains("pcall(function() rtt.expect(", Manual.Text);
-        Assert.Contains("assert(not printed", Manual.Text);
+        Assert.Contains("rtt.expect_absent(\"busy\", 400)", Manual.Text);
+        Assert.Contains("rtt.expect(\"tick: off\", 500)", Manual.Text);
+    }
+
+    [Fact]
+    public void Manual_shows_the_multi_branch_and_line_tailing_idioms()
+    {
+        Assert.Contains("rtt.expect_any(2000, \"ready\", \"err=(%d+)\")", Manual.Text);
+        Assert.Contains("rtt.read_line(100)", Manual.Text);
     }
 }

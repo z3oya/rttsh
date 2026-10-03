@@ -32,14 +32,14 @@ Script mode is the core of automated verification. `script --eval` runs Lua inli
 rttsh script --eval 'rtt.send("led r toggle"); rtt.expect("LED r toggled", 500)' --chip STM32H743XI
 ```
 
-Systematic test cases are written as script files. `rtt.expect` returns the matched text, which you can parse to assert on response fields:
+Systematic test cases are written as script files. `rtt.expect` returns the matched text, the match itself, and the pattern's captures as extra values, so response fields are captured in one step:
 
 ```lua
 -- Tests/t21_led_query.lua
 local function query_led(name)
   rtt.send("led "..name)
-  local q = rtt.expect("LED "..name.." %a+", 500)
-  return q:match("LED "..name.." (%a+)")
+  local t, m, state = rtt.expect("LED "..name.." (%a+)", 500)
+  return state
 end
 local g0 = query_led("g")
 rtt.send("led g toggle")
@@ -50,7 +50,7 @@ rtt.log("t21 PASS")
 
 The full suite lives in `examples/stm32/Tests` (23 scripts, a real target board required), covering field extraction, negative assertions, timing windows, channel independence, and more.
 
-An expect timeout is a failure (exit 1), and the error message includes the tail of the receive buffer so the firmware's actual response is visible right in the failure. The `rtt.*` API also covers binary transfer and target memory access (`rtt.mem_read`/`rtt.mem_write`).
+An expect timeout is a failure (exit 1), and the error message includes the tail of the receive buffer so the firmware's actual response is visible right in the failure. The expect family covers the common shapes: `rtt.try_expect` returns `nil, msg` on a quiet window instead of raising (polling loops), `rtt.expect_absent` is a first-class negative assertion, `rtt.expect_any` waits for whichever of several patterns matches first, `rtt.read_line` consumes one newline-terminated line (nil on timeout), and `rtt.flush` discards stale output. The `rtt.*` API also covers binary transfer and target memory access (`rtt.mem_read`/`rtt.mem_write`; `rtt.mem_read(addr)` reads one 32-bit unit as a scalar).
 
 By default the RTT control-block address is found by scanning RAM from the SDK; `--elf <image>` resolves it from the `_SEGGER_RTT` symbol instead, following rebuilds automatically.
 

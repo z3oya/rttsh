@@ -32,14 +32,14 @@ rttsh send "led r on" --chip STM32H743XI --wait 300
 rttsh script --eval 'rtt.send("led r toggle"); rtt.expect("LED r toggled", 500)' --chip STM32H743XI
 ```
 
-成体系的用例写成脚本文件。`rtt.expect` 返回匹配文本，可读回应答字段做状态断言：
+成体系的用例写成脚本文件。`rtt.expect` 返回匹配处之前的全部文本、命中文本本身，以及模式的各捕获组（多值返回），应答字段一步取到：
 
 ```lua
 -- Tests/t21_led_query.lua
 local function query_led(name)
   rtt.send("led "..name)
-  local q = rtt.expect("LED "..name.." %a+", 500)
-  return q:match("LED "..name.." (%a+)")
+  local t, m, state = rtt.expect("LED "..name.." (%a+)", 500)
+  return state
 end
 local g0 = query_led("g")
 rtt.send("led g toggle")
@@ -50,7 +50,7 @@ rtt.log("t21 PASS")
 
 完整套件在 `examples/stm32/Tests`（23 个脚本，需真实目标板），覆盖字段提取、否定断言、计时窗口、通道独立性等场景。
 
-expect 超时即失败（exit 1），错误信息附接收缓冲区尾部，可直接看到固件的实际应答。`rtt.*` API 还覆盖二进制收发与目标内存读写（`rtt.mem_read`/`rtt.mem_write`）。
+expect 超时即失败（exit 1），错误信息附接收缓冲区尾部，可直接看到固件的实际应答。expect 家族覆盖常用形态：`rtt.try_expect` 静默窗口返回 `nil, msg` 而不抛错（轮询循环）、`rtt.expect_absent` 是一等化否定断言、`rtt.expect_any` 等多个模式中最先匹配者、`rtt.read_line` 按行消费（静默返回 nil）、`rtt.flush` 丢弃过期输出。`rtt.*` API 还覆盖二进制收发与目标内存读写（`rtt.mem_read`/`rtt.mem_write`；`rtt.mem_read(addr)` 读单个 32 位单元直接返回数值）。
 
 RTT 控制块地址默认由 SDK 扫描 RAM 得出；`--elf <镜像>` 改为从 `_SEGGER_RTT` 符号解析，随重编译自动更新，结果缓存在 `.rttsh/elf-cache/`。
 

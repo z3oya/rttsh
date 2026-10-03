@@ -169,17 +169,44 @@ internal static class Manual
           rtt.wait_hex(ms)           same receive window as hex text (byte-exact)
           rtt.expect(pattern, ms)    wait until the Lua pattern matches and return
                                      the text through the match end (consuming);
-                                     ms defaults to 1000; a timeout raises an
-                                     error. Full Lua 5.4 pattern syntax and
-                                     scans forward from the end of the last match -
-                                     consumed text is never re-matched.
+                                     ms defaults to the set_timeout value (1000);
+                                     a timeout raises an error. Full Lua 5.4
+                                     pattern syntax and scans forward from the
+                                     end of the last match - consumed text is
+                                     never re-matched. Also returns the matched
+                                     text itself, then the pattern's captures:
+                                       local t, m, id = rtt.expect("id=(%d+)")
+          rtt.try_expect(p, ms)      expect that softens only the timeout: a
+                                     quiet window returns nil plus the same
+                                     message expect would raise (no consume);
+                                     a hit behaves exactly like expect
+          rtt.expect_absent(p, ms)   negative assertion: succeeds (nothing
+                                     consumed) exactly when expect would time
+                                     out; a hit consumes through the match end
+                                     and raises with the escaped hit text
+          rtt.expect_any(ms, ...)    wait until any of the patterns matches
+                                     (earliest match end wins, ties keep the
+                                     listed order); consumes through it and
+                                     returns the 1-based winner index, the
+                                     consumed text, the match, the captures
+          rtt.read_line(ms)          consume through the next newline, strip a
+                                     trailing \r, return the line; nil when the
+                                     window stays quiet (an empty line is "")
+          rtt.flush()                consume and discard everything received and
+                                     not yet matched - stale output cannot
+                                     feed a later expect
           rtt.now()                  monotonic milliseconds since the script started
           rtt.sleep(ms)              pause the script
           rtt.exit(code)             stop the script and exit with code (default 0)
-          rtt.mem_read(addr, n, w)   read n units of w bits (8/16/32, default 32) at the
-                                     byte address addr; returns a Lua table of unsigned
-                                     values, little-endian decoded; at most 1 MiB per
-                                     call; width > 8 needs an aligned address
+          rtt.set_timeout(ms)        default timeout for expect/try_expect/
+                                     expect_absent/read_line (initial 1000)
+          rtt.mem_read(addr, n, w)   read n units of w bits (8/16/32, default 32) at
+                                     the byte address addr; returns a Lua table of
+                                     unsigned values, little-endian decoded; at
+                                     most 1 MiB per call; width > 8 needs an
+                                     aligned address. rtt.mem_read(addr) reads
+                                     one 32-bit unit and returns the value
+                                     itself, not a table
           rtt.mem_write(addr, v, w)  write one value or a Lua table of values as w-bit
                                      (8/16/32, default 32) units, little-endian encoded;
                                      every value must fit the width; at most 1 MiB per
@@ -212,25 +239,43 @@ internal static class Manual
           rtt.send("led r on")
           rtt.expect("LED r on", 500)
 
-        rtt.expect returns everything up to the match end. Capture changing
-        values (ids, counters) with string.match and reuse them instead of
-        hard-coding, so a script survives reboots and renumbering:
+        rtt.expect returns everything up to the match end, then the matched
+        text itself and the pattern's captures as extra values. Capture
+        changing values (ids, counters) directly instead of hard-coding,
+        so a script survives reboots and renumbering:
 
-          local r  = rtt.expect("async1 #%d+ accepted", 500)
-          local id = r:match("#(%d+)")       -- capture the digits only
+          local t, m, id = rtt.expect("async1 #(%d+) accepted", 500)
           rtt.expect("async1 #"..id.." done", 2000)
 
         Keep the capture on the digits: "#(%d+)" yields "18", while
         "(#%d+)" yields "#18" and tonumber("#18") is nil.
 
-        To assert that something must NOT appear, expect it inside pcall and
-        require the timeout; probe the device afterwards to prove the console
+        To assert that something must NOT appear, expect_absent succeeds
+        when the window stays quiet and raises with the escaped hit text
+        when it does not; output received during the window survives for
+        later matching. Probe the device afterwards to prove the console
         stayed alive through the silent window:
 
-          local printed = pcall(function() rtt.expect("busy", 400) end)
-          assert(not printed, "quiet path printed a busy log")
+          rtt.expect_absent("busy", 400)
           rtt.send("tick")
           rtt.expect("tick: off", 500)
+
+        To act on whichever reply arrives first - success or an error
+        report - expect_any watches the patterns at once and tells you
+        which one won (1-based index):
+
+          local i, t, m, code = rtt.expect_any(2000, "ready", "err=(%d+)")
+          if i == 2 then error("device reported err=" .. tostring(code), 0) end
+
+        To tail asynchronous output line by line, read_line consumes one
+        newline-terminated line and returns nil when the window stays
+        quiet (an empty line is "", never nil):
+
+          while true do
+            local line = rtt.read_line(100)
+            if line == nil then break end
+            if line:find("ERROR") then rtt.log("saw: " .. line) end
+          end
 
         To assert timing, bracket the exchange with rtt.now() and require
         the elapsed window (the example firmware delays async1 by the
