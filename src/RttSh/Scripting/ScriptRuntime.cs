@@ -6,10 +6,10 @@ using RttSh.Core.SerialComm;
 namespace Toolbox.Tools.RttCli.Scripting;
 
 /// <summary>Engine-free state machine behind script automation: transport events arrive on any
-/// thread; every rtt.* operation runs on the single script thread (NLua's state is not
+/// thread; every rtt.* operation runs on the single script thread (the Lua state is not
 /// thread-safe either - see LuaScriptHost). Internally the RX stream is viewed as Latin-1 text
-/// (1 byte = 1 char) so pattern matching is byte-exact for ASCII; the NLua boundary re-encodes
-/// strings, so scripts that must see raw bytes use WaitHex instead of Wait.
+/// (1 byte = 1 char) so pattern matching is byte-exact for ASCII; the native Lua boundary
+/// re-encodes strings as UTF-8, so scripts that must see raw bytes use WaitHex instead of Wait.
 ///
 /// Semantics: Wait is a passive tap (returns the bytes that arrived during the call, consumes
 /// nothing); Expect is the consuming matcher (scans everything since the last match, consumes
@@ -110,7 +110,7 @@ internal sealed class ScriptRuntime
     }
 
     /// <summary>Lossless binary variant of Wait: the same window of newly arrived bytes rendered
-    /// as hex text. Hex crosses the NLua string boundary as pure ASCII, so this is the
+    /// as hex text. Hex crosses the Lua string boundary as pure ASCII, so this is the
     /// byte-exact path - Wait/Expect strings are re-encoded by the binding.</summary>
     public string WaitHex(int timeoutMs) => HexCodec.Format(Encoding.Latin1.GetBytes(Wait(timeoutMs)));
 

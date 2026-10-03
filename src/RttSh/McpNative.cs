@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace Toolbox.Tools.RttCli;
 
 /// <summary>P/Invoke surface of the Rust glue crate (native/rttsh-mcp → rttsh_mcp_native.dll,
-/// built by the BuildRttshNative MSBuild target and shipped flat like lua54.dll). Conventions
+/// built by the BuildRttshNative MSBuild target and shipped flat like the other native DLLs). Conventions
 /// from the interop study: [LibraryImport] source generation, UTF-8, status-code errors,
 /// panics caught inside the DLL (never Environment.Exit next to it - see Program's class doc).
 /// Buffers are caller-allocated (feed/drain); the dispatch response is the one handover - C#

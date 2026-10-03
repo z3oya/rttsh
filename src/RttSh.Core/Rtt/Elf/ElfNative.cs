@@ -5,8 +5,8 @@ using System.Text;
 namespace RttSh.Core.Rtt.Elf;
 
 /// <summary>P/Invoke surface of the Rust ELF crate (native/rttsh-elf →
-/// rttsh_elf_native.dll, built by BuildRttshNative and shipped flat like lua54.dll
-/// and rttsh_mcp_native.dll). Same interop conventions as McpNative: [LibraryImport]
+/// rttsh_elf_native.dll, built by BuildRttshNative and shipped flat like
+/// rttsh_mcp_native.dll). Same interop conventions as McpNative: [LibraryImport]
 /// source generation, UTF-8, panics caught inside the DLL. The return code reports
 /// only the FFI ladder (Ok / invalid handle / bad argument / internal) - every domain
 /// result travels through out-params, and a positive return is always a count, never

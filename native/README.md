@@ -2,8 +2,8 @@
 
 Rust workspace for rttsh's native layer. `cargo build --release` builds it; the
 `BuildRttshNative` MSBuild target in `src/RttSh/RttSh.csproj` runs that automatically
-and copies the cdylib outputs (`rttsh_mcp_native.dll`, `rttsh_elf_native.dll`) flat
-next to the managed output (same shape as lua54.dll), so a plain `dotnet build` is
+and copies the cdylib outputs (`rttsh_mcp_native.dll`, `rttsh_elf_native.dll`,
+`rttsh_lua_native.dll`) flat next to the managed output, so a plain `dotnet build` is
 all the C# side needs.
 
 - `rttsh-mcp` — the MCP layer (rmcp protocol + tool schemas in Rust, tool execution
@@ -15,6 +15,10 @@ all the C# side needs.
 - `rttsh-elf` — the ELF domain (parse ladder, symbol lookup, RTT control-block
   locate) behind `rttsh_elf_native.dll`; the C# facade is
   `src/RttSh.Core/Rtt/Elf/{ElfNative,ElfImage}.cs`.
+- `rttsh-lua` — Lua 5.4 hosting (mlua, lua54 + vendored: the interpreter
+  compiles statically into `rttsh_lua_native.dll`, replacing NLua/KeraLua/
+  lua54.dll) behind the script subcommand; the C# facade is
+  `src/RttSh/Scripting/{LuaNative,LuaScriptHost}.cs`.
 
 Conventions (from the C#↔Rust interop study, per crate ABI ladder): `extern "C"`
 exports return status codes and never let a panic escape; a negative return is the

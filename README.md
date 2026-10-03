@@ -12,7 +12,7 @@ An MCP server (`rttsh mcp`) and the `skills/rttsh-verify-on-board` skill are pro
 
 ## Requirements
 
-Windows (depends on JLink_x64.dll and lua54); the .NET 10 runtime (needed by the framework-dependent installer, bundled in the self-contained package); the SEGGER J-Link driver and a probe (the J-Link DLL is auto-detected, or point to one with `--dll`); firmware linked with the RTT control block (`_SEGGER_RTT`) and already flashed to the target board. See `installer/` for installers and building from source.
+Windows (depends on JLink_x64.dll); the .NET 10 runtime (needed by the framework-dependent installer, bundled in the self-contained package); the SEGGER J-Link driver and a probe (the J-Link DLL is auto-detected, or point to one with `--dll`); firmware linked with the RTT control block (`_SEGGER_RTT`) and already flashed to the target board. See `installer/` for installers and building from source.
 
 ## Usage
 

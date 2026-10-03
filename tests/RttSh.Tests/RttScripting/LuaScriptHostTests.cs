@@ -223,8 +223,9 @@ public class LuaScriptHostTests
     [Fact]
     public void Exit_stops_script_and_returns_code()
     {
-        // Pins the assumption that NLua preserves a CLR exception from a registered delegate
-        // as LuaScriptException.InnerException (see ScriptExitSignal doc for the fallback).
+        // Pins the exit sentinel protocol: rtt.exit unwinds as the __rtt_exit= Lua
+        // sentinel and the host classifies it back into the exit code (see
+        // ScriptExitSignal doc).
         using var h = Make("rtt.log('a')\nrtt.exit(3)\nrtt.log('b')");
         Assert.Equal(3, h.Host.Run());
         Assert.Equal(["a"], h.Log);
@@ -318,9 +319,9 @@ public class LuaScriptHostTests
         Assert.Contains("eval:1:", ex.Message);
     }
 
-    // ---- the mem API across the NLua boundary --------------------------------------------
-    // These pin the actual marshaling: tables built host-side, numbers crossing as Lua
-    // numbers, errors surfacing as catchable Lua errors naming the rtt.* function.
+    // ---- the mem API across the native Lua boundary ---------------------------------------
+    // These pin the actual marshaling: tables built Rust-side, numbers crossing as exact
+    // i64s, errors surfacing as catchable Lua errors naming the rtt.* function.
 
     [Fact]
     public void Mem_read_returns_a_lua_table_of_units()
