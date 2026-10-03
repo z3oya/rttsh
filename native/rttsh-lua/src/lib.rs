@@ -22,7 +22,7 @@
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use mlua::{Error, Lua, Value};
+use mlua::{Error, Function, Lua, MultiValue, Table, Value};
 
 /// Status ladder, mirrored by the C# side in `LuaNative.cs`.
 pub const OK: i32 = 0;
@@ -123,6 +123,13 @@ fn msg_or_nil(lua: &Lua, st: i32, msg: &str) -> mlua::Result<Value> {
     } else {
         Ok(Value::Nil)
     }
+}
+
+/// The state's own pattern engine (string.find) — expect's matcher runs here
+/// so the script-visible pattern semantics are exactly Lua 5.4's.
+fn string_find(lua: &Lua) -> mlua::Result<Function> {
+    let string: Table = lua.globals().get("string")?;
+    string.get("find")
 }
 
 /// Registers the shim's HOST_* globals backed by `host`. The shim (run by the
@@ -245,6 +252,107 @@ fn register_host(lua: &Lua, host: Host) -> mlua::Result<()> {
                 let mut msg: *mut u8 = std::ptr::null_mut();
                 let mut msg_len: usize = 0;
                 let st = ((*host.0).exit)((*host.0).ctx, code, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_wait",
+        lua.create_function(move |lua, ms: i32| {
+            let (st, ptr, len) = unsafe {
+                let mut out: *mut u8 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+                let st = ((*host.0).wait)((*host.0).ctx, ms, &mut out, &mut out_len);
+                (st, out, out_len)
+            };
+            let text = unsafe { take_handover(ptr, len) };
+            Ok((st, Value::String(lua.create_string(text)?)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_wait_hex",
+        lua.create_function(move |lua, ms: i32| {
+            let (st, ptr, len) = unsafe {
+                let mut out: *mut u8 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+                let st = ((*host.0).wait_hex)((*host.0).ctx, ms, &mut out, &mut out_len);
+                (st, out, out_len)
+            };
+            let text = unsafe { take_handover(ptr, len) };
+            Ok((st, Value::String(lua.create_string(text)?)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_expect",
+        lua.create_function(move |lua, (pattern, timeout): (String, i32)| {
+            let (st, ptr, len) = unsafe {
+                let mut out: *mut u8 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+                let st = ((*host.0).expect)((*host.0).ctx, pattern.as_ptr(), pattern.len(), timeout, &mut out, &mut out_len);
+                (st, out, out_len)
+            };
+            let text = unsafe { take_handover(ptr, len) };
+            Ok((st, Value::String(lua.create_string(text)?)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_mem_read",
+        lua.create_function(move |lua, (addr, count, width): (i64, i64, i32)| {
+            let (st, ptr, len, mptr, mlen) = unsafe {
+                let mut out: *mut i64 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).mem_read)((*host.0).ctx, addr, count, width, &mut out, &mut out_len, &mut msg, &mut msg_len);
+                (st, out, out_len, msg, msg_len)
+            };
+            if st != CB_OK {
+                let msg = unsafe { take_handover(mptr, mlen) };
+                return Ok((st, Value::String(lua.create_string(msg)?)));
+            }
+            let table = lua.create_table()?;
+            // The C# side hands over exactly out_len i64s (nothing for count 0).
+            if !ptr.is_null() && len > 0 {
+                let values = unsafe { std::slice::from_raw_parts(ptr, len) };
+                for (i, v) in values.iter().enumerate() {
+                    table.raw_set(i as i64 + 1, *v)?;
+                }
+                unsafe { free(ptr as *mut u8, len * 8) };
+            }
+            Ok((st, Value::Table(table)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_mem_write_one",
+        lua.create_function(move |lua, (addr, value, width): (i64, i64, i32)| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).mem_write_one)((*host.0).ctx, addr, value, width, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_mem_write_table",
+        lua.create_function(move |lua, (addr, values, _count, width): (i64, Table, i64, i32)| {
+            // The shim hands over its dense 1..n copy table; the extracted
+            // Vec's length is the count the C# side sees (it re-validates).
+            let numbers: Vec<i64> = values.sequence_values::<i64>().collect::<mlua::Result<_>>()?;
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).mem_write_table)((*host.0).ctx, addr, numbers.as_ptr(), numbers.len(), width, &mut msg, &mut msg_len);
                 (st, msg, msg_len)
             };
             let msg = unsafe { take_handover(ptr, len) };
@@ -435,6 +543,74 @@ pub unsafe extern "C" fn rttsh_lua_do_string(
     .unwrap_or(ERR_INTERNAL)
 }
 
+/// Calls string.find(region, pattern, 1, false) on the state — the
+/// PatternMatcher entry point. On OK, *end_out is 0 for no match, else the
+/// 1-based inclusive end (== the chars to consume). CB_ERR marks a malformed
+/// pattern with the message handed over. Re-entrant by design: expect's host
+/// callback calls this while do_string is still on the stack (standard Lua
+/// re-entrancy — expect runs on the same thread that owns the state).
+///
+/// # Safety
+/// `region`/`pattern` must be readable for their lengths and the out-pointers
+/// writable; `handle` must come from `rttsh_lua_create`, be live, and all
+/// calls on it stay on the one script thread.
+#[no_mangle]
+pub unsafe extern "C" fn rttsh_lua_find(
+    handle: usize,
+    region: *const u8,
+    region_len: usize,
+    pattern: *const u8,
+    pattern_len: usize,
+    end_out: *mut i32,
+    msg_out: *mut *mut u8,
+    msg_len_out: *mut usize,
+) -> i32 {
+    if handle == 0
+        || region.is_null()
+        || pattern.is_null()
+        || end_out.is_null()
+        || msg_out.is_null()
+        || msg_len_out.is_null()
+    {
+        return ERR_BAD_ARGUMENT;
+    }
+    unsafe {
+        *end_out = -1;
+        *msg_out = std::ptr::null_mut();
+        *msg_len_out = 0;
+    }
+    let region = unsafe { host_string(region, region_len) };
+    let pattern = unsafe { host_string(pattern, pattern_len) };
+    guard(|| {
+        // SAFETY: checked above — handle is nonzero and owned by the caller.
+        let lua = unsafe { &*(handle as *const Lua) };
+        let find = match string_find(lua) {
+            Ok(f) => f,
+            Err(_) => return ERR_INTERNAL,
+        };
+        match find.call::<MultiValue>((region, pattern, 1, false)) {
+            Ok(vals) => {
+                let mut it = vals.into_iter();
+                let end = match it.next() {
+                    None | Some(Value::Nil) => 0,
+                    Some(_) => match it.next() {
+                        Some(Value::Integer(end)) => end as i32,
+                        _ => 0,
+                    },
+                };
+                unsafe { *end_out = end };
+                OK
+            }
+            Err(e) => {
+                let (_, _, msg) = classify(&e);
+                unsafe { handover(msg_out, msg_len_out, &msg) };
+                CB_ERR
+            }
+        }
+    })
+    .unwrap_or(ERR_INTERNAL)
+}
+
 /// Creates a Lua 5.4 state with the standard libraries and returns a nonzero
 /// handle for do_string/find/destroy, or 0 on failure. The vtable is validated
 /// here and wired to the HOST_* trampolines as they land.
@@ -475,18 +651,10 @@ pub unsafe extern "C" fn rttsh_lua_destroy(handle: usize) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::sync::Mutex;
 
     use super::*;
-
-    // Value-entry stubs — replaced by recording mocks when those trampolines
-    // land; here they only prove the declared field types compile.
-    unsafe extern "C" fn s_wait(_: *mut c_void, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_expect(_: *mut c_void, _: *const u8, _: usize, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_mem_read(_: *mut c_void, _: i64, _: i64, _: i32, _: *mut *mut i64, _: *mut usize, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_mw_one(_: *mut c_void, _: i64, _: i64, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
-    unsafe extern "C" fn s_mw_table(_: *mut c_void, _: i64, _: *const i64, _: usize, _: i32, _: *mut *mut u8, _: *mut usize) -> i32 { CB_OK }
 
     /// Test fixture mirroring the shim the C# host installs (the production
     /// copy lives in LuaScriptHost.cs from the flip round on — keep in sync;
@@ -599,9 +767,21 @@ rtt = {
         log: Mutex<Vec<String>>,
         slept: Mutex<Vec<i32>>,
         control: Mutex<Vec<&'static str>>,
+        /// (addr, values, width) the mem_write entries received.
+        written: Mutex<Vec<(i64, Vec<i64>, i32)>>,
         now_ms: Cell<f64>,
         exit_code: Cell<i64>,
         halted: Cell<i32>,
+        /// (addr, count, width) of the last mem_read.
+        last_read: Cell<(i64, i64, i32)>,
+        /// Handle back-reference so mock_expect can re-enter rttsh_lua_find
+        /// (set right after create — the PatternMatcher shape).
+        handle: Cell<usize>,
+        /// Text wait/wait_hex hand over on success; the region expect matches.
+        wait_text: RefCell<String>,
+        region: RefCell<String>,
+        /// Values mem_read returns on success.
+        read_values: RefCell<Vec<i64>>,
         /// When armed, every status-style entry fails with this message —
         /// exercises the CB_ERR → shim error path.
         fail: Cell<Option<&'static str>>,
@@ -614,9 +794,15 @@ rtt = {
                 log: Mutex::new(Vec::new()),
                 slept: Mutex::new(Vec::new()),
                 control: Mutex::new(Vec::new()),
+                written: Mutex::new(Vec::new()),
                 now_ms: Cell::new(12.5),
                 exit_code: Cell::new(0),
                 halted: Cell::new(0),
+                last_read: Cell::new((0, 0, 0)),
+                handle: Cell::new(0),
+                wait_text: RefCell::new(String::new()),
+                region: RefCell::new(String::new()),
+                read_values: RefCell::new(Vec::new()),
                 fail: Cell::new(None),
             }
         }
@@ -688,21 +874,115 @@ rtt = {
         c.fail_or(msg, msg_len)
     }
 
+    /// wait/wait_hex share one shape: the out-pair carries the value (ok) or
+    /// the failure message (err).
+    unsafe extern "C" fn mock_wait(ctx: *mut c_void, _timeout: i32, out: *mut *mut u8, out_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        if let Some(m) = c.fail.get() {
+            unsafe { handover(out, out_len, m) };
+            return CB_ERR;
+        }
+        let text = c.wait_text.borrow().clone();
+        unsafe { handover(out, out_len, &text) };
+        CB_OK
+    }
+
+    /// The PatternMatcher shape: re-enters rttsh_lua_find on the same state
+    /// while do_string is still on the stack.
+    unsafe extern "C" fn mock_expect(
+        ctx: *mut c_void, pattern: *const u8, pattern_len: usize, _timeout: i32, out: *mut *mut u8, out_len: *mut usize,
+    ) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        let region = c.region.borrow().clone();
+        let mut end = -1i32;
+        let mut fmsg: *mut u8 = std::ptr::null_mut();
+        let mut fmsg_len = 0usize;
+        let rc = unsafe {
+            rttsh_lua_find(
+                c.handle.get(),
+                region.as_ptr(),
+                region.len(),
+                pattern,
+                pattern_len,
+                &mut end,
+                &mut fmsg,
+                &mut fmsg_len,
+            )
+        };
+        if rc == OK {
+            let text = if end <= 0 { String::new() } else { end.to_string() };
+            unsafe { handover(out, out_len, &text) };
+            return CB_OK;
+        }
+        if rc == CB_ERR {
+            let msg = unsafe { take_handover(fmsg, fmsg_len) };
+            unsafe { handover(out, out_len, &msg) };
+            return CB_ERR;
+        }
+        unsafe { handover(out, out_len, "expect: find infra failure") };
+        CB_ERR
+    }
+
+    unsafe extern "C" fn mock_mem_read(
+        ctx: *mut c_void, addr: i64, count: i64, width: i32, out: *mut *mut i64, out_len: *mut usize, msg: *mut *mut u8, msg_len: *mut usize,
+    ) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        if let Some(m) = c.fail.get() {
+            unsafe { handover(msg, msg_len, m) };
+            return CB_ERR;
+        }
+        c.last_read.set((addr, count, width));
+        let requested: Vec<i64> = c.read_values.borrow().iter().take(count.max(0) as usize).copied().collect();
+        if requested.is_empty() {
+            unsafe {
+                *out = std::ptr::null_mut();
+                *out_len = 0;
+            }
+            return CB_OK;
+        }
+        let bytes: Vec<u8> = requested.iter().flat_map(|v| v.to_le_bytes()).collect();
+        let ptr = leak_vec(bytes);
+        unsafe {
+            *out = ptr as *mut i64;
+            *out_len = requested.len();
+        }
+        CB_OK
+    }
+
+    unsafe extern "C" fn mock_mem_write_one(ctx: *mut c_void, addr: i64, value: i64, width: i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.written.lock().unwrap().push((addr, vec![value], width));
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_mem_write_table(
+        ctx: *mut c_void, addr: i64, values: *const i64, count: usize, width: i32, msg: *mut *mut u8, msg_len: *mut usize,
+    ) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        let copy = if count > 0 && !values.is_null() {
+            unsafe { std::slice::from_raw_parts(values, count) }.to_vec()
+        } else {
+            Vec::new()
+        };
+        c.written.lock().unwrap().push((addr, copy, width));
+        c.fail_or(msg, msg_len)
+    }
+
     fn mock_vtable(ctx: &MockCtx) -> Box<HostVTable> {
         Box::new(HostVTable {
             ctx: ctx as *const MockCtx as *mut c_void,
             send: mock_send,
             send_hex: mock_send_hex,
             log: mock_log,
-            wait: s_wait,
-            wait_hex: s_wait,
-            expect: s_expect,
+            wait: mock_wait,
+            wait_hex: mock_wait,
+            expect: mock_expect,
             now: mock_now,
             sleep: mock_sleep,
             exit: mock_exit,
-            mem_read: s_mem_read,
-            mem_write_one: s_mw_one,
-            mem_write_table: s_mw_table,
+            mem_read: mock_mem_read,
+            mem_write_one: mock_mem_write_one,
+            mem_write_table: mock_mem_write_table,
             is_halted: mock_is_halted,
             halt: mock_halt,
             resume: mock_resume,
@@ -918,6 +1198,65 @@ rtt = {
             assert_eq!(kind, KIND_ERROR);
             assert!(msg.contains("mock failure"), "got: {msg}");
             assert!(msg.contains("script.lua:1:"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn wait_wait_hex_and_expect_hand_strings_over() {
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("off end".into());
+            ctx.wait_text.replace("v=1\n".into());
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "rtt.log('[' .. rtt.wait(100) .. ']') rtt.log(rtt.wait_hex(100)) rtt.log(rtt.expect('o[f][f]'))",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["[v=1\n]", "v=1\n", "3"]);
+        });
+    }
+
+    #[test]
+    fn mem_read_builds_a_table_and_mem_write_extracts_values() {
+        with_mock(|ctx, h| {
+            ctx.read_values.replace(vec![1_000_000_000, 2_000_000_000, 3_000_000_000]);
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "rtt.log(#rtt.mem_read(0, 0, 32)) \
+                 local t = rtt.mem_read(0x40000000, 3, 32) \
+                 local sum = 0 for i = 1, #t do sum = sum + t[i] end rtt.log(sum) \
+                 rtt.mem_write(0x10, {10, 20, 30}, 8) rtt.mem_write(0x20, 42, 16)",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["0", "6000000000"]); // i64-exact, > 2^32
+            assert_eq!(ctx.last_read.get(), (0x40000000, 3, 32));
+            assert_eq!(*ctx.written.lock().unwrap(), vec![(0x10, vec![10, 20, 30], 8), (0x20, vec![42], 16)]);
+        });
+    }
+
+    #[test]
+    fn expect_reenters_find_on_the_same_state() {
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("off end".into());
+            let (rc, kind, _, msg) = run_script(h, "rtt.log(rtt.expect('o[f][f]'))");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["3"]); // 1-based inclusive end == consume count
+        });
+    }
+
+    #[test]
+    fn malformed_pattern_surfaces_through_expect() {
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("x".into());
+            let (rc, kind, _, msg) = run_script(h, "rtt.expect('[')");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("malformed"), "got: {msg}");
         });
     }
 }
