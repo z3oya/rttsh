@@ -13,15 +13,16 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
-  <!-- Builds the Rust glue crates (native/) and ships rttsh_mcp_native.dll and
-       rttsh_elf_native.dll flat next to the managed output, like lua54.dll.
-       Inputs/Outputs let MSBuild skip cargo entirely when the DLL is newer than
+  <!-- Builds the Rust glue crates (native/) and ships rttsh_mcp_native.dll,
+       rttsh_elf_native.dll and rttsh_lua_native.dll flat next to the managed output.
+       Inputs/Outputs let MSBuild skip cargo entirely when the DLLs are newer than
        every Rust source (rttsh-svd is an rlib-only workspace member - it is not
-       linked into either DLL, so its sources are deliberately not tracked).
+       linked into any DLL, so its sources are deliberately not tracked).
        Escape hatch: -p:RttshSkipNative=true. -->
   <ItemGroup>
     <RttshNativeSources Include="$(RttshNativeDir)rttsh-mcp\src\**\*.rs" />
     <RttshNativeSources Include="$(RttshNativeDir)rttsh-elf\src\**\*.rs" />
+    <RttshNativeSources Include="$(RttshNativeDir)rttsh-lua\src\**\*.rs" />
     <Content Include="$(RttshNativeDll)"
              Link="rttsh_mcp_native.dll"
              CopyToOutputDirectory="PreserveNewest"
@@ -30,12 +31,16 @@
              Link="rttsh_elf_native.dll"
              CopyToOutputDirectory="PreserveNewest"
              Visible="false" />
+    <Content Include="$(RttshLuaNativeDll)"
+             Link="rttsh_lua_native.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Visible="false" />
   </ItemGroup>
   <Target Name="BuildRttshNative"
           BeforeTargets="BeforeBuild"
           Condition="'$(OS)' == 'Windows_NT' and '$(RttshSkipNative)' != 'true'"
-          Inputs="$(RttshNativeDir)Cargo.toml;$(RttshNativeDir)Cargo.lock;$(RttshNativeDir)rttsh-mcp\Cargo.toml;$(RttshNativeDir)rttsh-elf\Cargo.toml;@(RttshNativeSources)"
-          Outputs="$(RttshNativeDll);$(RttshElfNativeDll)">
+          Inputs="$(RttshNativeDir)Cargo.toml;$(RttshNativeDir)Cargo.lock;$(RttshNativeDir)rttsh-mcp\Cargo.toml;$(RttshNativeDir)rttsh-elf\Cargo.toml;$(RttshNativeDir)rttsh-lua\Cargo.toml;@(RttshNativeSources)"
+          Outputs="$(RttshNativeDll);$(RttshElfNativeDll);$(RttshLuaNativeDll)">
     <Exec Command="cargo build --release --manifest-path &quot;$(RttshNativeDir)Cargo.toml&quot;" />
     <ItemGroup>
       <FileWrites Include="$(RttshNativeDll)" />
@@ -51,7 +56,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NLua" Version="1.7.9" />
     <PackageReference Include="System.CommandLine" Version="2.0.12" />
   </ItemGroup>
 
