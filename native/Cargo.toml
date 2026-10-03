@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["rttsh-mcp", "rttsh-svd", "rttsh-elf"]
+members = ["rttsh-mcp", "rttsh-svd", "rttsh-elf", "rttsh-lua"]
 
 [workspace.package]
 version = "0.1.0"
