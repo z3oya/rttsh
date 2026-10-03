@@ -1,6 +1,6 @@
 -- led r is queried first so the probe is undone on exit instead of leaking state
 rtt.send("led r")
-local r0 = rtt.expect("LED r %a+", 500):match("LED r (%a+)")
+local _, _, r0 = rtt.expect("LED r (%a+)", 500)
 rtt.send("async2 1500")
 rtt.send("async2 100")
 rtt.expect("async2 busy: #%d+ still pending", 500)

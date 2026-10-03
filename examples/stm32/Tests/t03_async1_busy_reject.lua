@@ -1,6 +1,5 @@
 rtt.send("async1 1500")
-local r = rtt.expect("async1 #%d+ accepted", 500)
-local id = r:match("#(%d+)")
+local _, _, id = rtt.expect("async1 #(%d+) accepted", 500)
 rtt.send("async1 100")
 rtt.expect("async1 busy: #"..id.." still pending", 500)
 rtt.expect("async1 #"..id.." done", 3000)

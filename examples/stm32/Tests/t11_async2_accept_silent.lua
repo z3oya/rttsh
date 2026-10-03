@@ -1,10 +1,7 @@
 rtt.send("async2 2000")
--- pcall also fails on a malformed pattern, so assert the timeout text itself
-local acc, aerr = pcall(function() rtt.expect("accepted", 400) end)
-assert(not acc and tostring(aerr):find("not found", 1, true),
-  "FAIL: expected no accept message, got: "..tostring(aerr))
-local busy, berr = pcall(function() rtt.expect("busy", 100) end)
-assert(not busy and tostring(berr):find("not found", 1, true),
-  "FAIL: expected no busy message, got: "..tostring(berr))
+-- negative assertions: the window must stay free of both messages;
+-- expect_absent succeeds only on a quiet window, a hit raises with the text
+rtt.expect_absent("accepted", 400)
+rtt.expect_absent("busy", 100)
 rtt.expect("async2 #%d+ done", 3000)
 rtt.log("t11 PASS")

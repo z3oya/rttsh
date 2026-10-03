@@ -1,8 +1,7 @@
 -- query reads the pin state back from IDR (active-low)
 local function query_led(name)
   rtt.send("led "..name)
-  local q = rtt.expect("LED "..name.." %a+", 500)
-  local st = q:match("LED "..name.." (%a+)")
+  local _, _, st = rtt.expect("LED "..name.." (%a+)", 500)
   assert(st == "on" or st == "off", "FAIL: bad query text: "..tostring(st))
   return st
 end
