@@ -100,9 +100,9 @@ public class LuaNativeSmokeTests
     public void FindEnd_maps_the_pattern_engine_results()
     {
         using var h = Make();
-        Assert.Equal(11, h.Session.FindEnd("hello world", "w[a-z]+"));   // 1-based inclusive end
-        Assert.Null(h.Session.FindEnd("abc", "zzz"));
-        var ex = Assert.Throws<ScriptError>(() => h.Session.FindEnd("x", "["));
+        Assert.Equal(11, h.Session.FindEnd("hello world", "w[a-z]+", "expect"));   // 1-based inclusive end
+        Assert.Null(h.Session.FindEnd("abc", "zzz", "expect"));
+        var ex = Assert.Throws<ScriptError>(() => h.Session.FindEnd("x", "[", "expect"));
         Assert.Contains("malformed", ex.Message);
     }
 }

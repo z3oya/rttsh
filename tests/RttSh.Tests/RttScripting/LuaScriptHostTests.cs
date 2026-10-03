@@ -221,6 +221,113 @@ public class LuaScriptHostTests
     }
 
     [Fact]
+    public void Expect_returns_match_and_captures_as_multiple_values()
+    {
+        using var h = Make("""
+            local text, m, id = rtt.expect('async1 #(%d+) accepted', 500)
+            rtt.log(text)
+            rtt.log(m)
+            rtt.log(id)
+            """);
+        h.Transport.Feed("async1 #18 accepted"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["async1 #18 accepted", "async1 #18 accepted", "18"], h.Log);
+    }
+
+    [Fact]
+    public void Set_timeout_drives_the_expect_default()
+    {
+        using var h = Make("rtt.set_timeout(40)\nrtt.expect('X')");
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("within 40 ms", ex.Message);
+    }
+
+    [Fact]
+    public void Expect_rejects_non_string_patterns_with_its_own_name()
+    {
+        // shim-side: the native boundary would turn this into a bare mlua conversion error
+        using var h = Make("rtt.expect(42)");
+        var ex = Assert.Throws<ScriptError>(() => h.Host.Run());
+        Assert.Contains("expect: pattern must be a string", ex.Message);
+    }
+
+    [Fact]
+    public void Try_expect_returns_nil_and_the_message_on_timeout()
+    {
+        using var h = Make("""
+            local a, b = rtt.try_expect('X', 40)
+            rtt.log(tostring(a))
+            rtt.log(b)
+            """);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal("nil", h.Log[0]);
+        Assert.Contains("try_expect: 'X' not found within 40 ms", h.Log[1]);
+    }
+
+    [Fact]
+    public void Try_expect_matches_and_consumes_like_expect()
+    {
+        using var h = Make("""
+            local a = rtt.try_expect('OK', 500)
+            rtt.log(a)
+            rtt.log(rtt.expect('tail', 500))
+            """);
+        h.Transport.Feed("OK tail"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["OK", " tail"], h.Log);
+    }
+
+    [Fact]
+    public void Read_line_returns_lines_and_nil_on_timeout()
+    {
+        using var h = Make("""
+            rtt.log(rtt.read_line(500))
+            rtt.log(rtt.read_line(500))
+            rtt.log(tostring(rtt.read_line(40)))
+            """);
+        h.Transport.Feed("one\r\ntwo\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["one", "two", "nil"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_absent_passes_a_quiet_window_end_to_end()
+    {
+        using var h = Make("""
+            rtt.expect_absent('busy', 60)
+            rtt.log(rtt.expect('quiet', 500))
+            """);
+        h.Transport.Feed("all quiet"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["all quiet"], h.Log);
+    }
+
+    [Fact]
+    public void Expect_any_returns_index_text_and_captures()
+    {
+        using var h = Make("""
+            local i, t, m, c = rtt.expect_any(500, 'OK', 'ERR=(%a+)')
+            rtt.log(i)
+            rtt.log(t)
+            rtt.log(c)
+            """);
+        h.Transport.Feed("ERR=hot\n"u8.ToArray());
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["2", "ERR=hot", "hot"], h.Log);
+    }
+
+    [Fact]
+    public void Flush_clears_stale_output_so_only_new_data_matches()
+    {
+        using var h = Make("rtt.flush()\nrtt.log(rtt.expect('fresh', 2000))");
+        h.Transport.Feed("stale"u8.ToArray());
+        _ = Task.Run(async () => { await Task.Delay(50); h.Transport.Feed("fresh"u8.ToArray()); });
+        Assert.Equal(0, h.Host.Run());
+        // without the flush this would match the stale prefix: "stalefresh"
+        Assert.Equal(["fresh"], h.Log);
+    }
+
+    [Fact]
     public void Exit_stops_script_and_returns_code()
     {
         // Pins the exit sentinel protocol: rtt.exit unwinds as the __rtt_exit= Lua
@@ -334,6 +441,26 @@ public class LuaScriptHostTests
         Assert.Equal(0, h.Host.Run());
         Assert.Equal(["12345678 1 1"], h.Log);
         Assert.Equal(4u, m.LastAccess);   // width defaults to 32
+    }
+
+    [Fact]
+    public void Mem_read_without_count_returns_a_scalar()
+    {
+        var m = new TestTargetMemory { Data = [0x78, 0x56, 0x34, 0x12] };
+        using var h = Make("rtt.log(rtt.mem_read(0))", m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["305419896"], h.Log);   // 0x12345678, not a 1-element table
+        Assert.Equal(4u, m.LastAccess);
+    }
+
+    [Fact]
+    public void Mem_read_scalar_rule_keys_on_the_count_slot_only()
+    {
+        var m = new TestTargetMemory { Data = [0xAB] };
+        using var h = Make("rtt.log(rtt.mem_read(0, nil, 8))", m);
+        Assert.Equal(0, h.Host.Run());
+        Assert.Equal(["171"], h.Log);   // 0xAB
+        Assert.Equal(1u, m.LastAccess);
     }
 
     [Fact]

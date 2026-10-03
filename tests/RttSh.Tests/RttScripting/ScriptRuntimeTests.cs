@@ -184,6 +184,156 @@ public class ScriptRuntimeTests
         Assert.Throws<ScriptError>(() => rt.Expect("", 50));
     }
 
+    // ---- the expect family extensions (try_expect / expect_absent / expect_any / flush) ----
+
+    [Fact]
+    public void Expect_soft_timeout_signals_instead_of_failing()
+    {
+        var rt = MakeRuntime(new TestRttTransport());
+        var ex = Assert.Throws<ScriptSoftTimeout>(() => rt.Expect("nope", 40, throwOnTimeout: false, what: "try_expect"));
+        Assert.Contains("try_expect: 'nope' not found within 40 ms", ex.Message);
+        Assert.Contains("buffer tail:", ex.Message);
+        Assert.IsAssignableFrom<ScriptError>(ex);
+    }
+
+    [Fact]
+    public void Expect_names_the_calling_api_in_its_messages()
+    {
+        var rt = MakeRuntime(new TestRttTransport());
+        var hard = Assert.Throws<ScriptError>(() => rt.Expect("nope", 40, throwOnTimeout: true, what: "try_expect"));
+        Assert.StartsWith("try_expect:", hard.Message);
+        Assert.StartsWith("try_expect:", Assert.Throws<ScriptError>(() => rt.Expect("", 40, throwOnTimeout: true, what: "try_expect")).Message);
+    }
+
+    [Fact]
+    public void Flush_discards_pending_output()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("stale"u8.ToArray());
+        rt.Flush();
+        Assert.Equal("", rt.Wait(20));
+        Assert.Throws<ScriptError>(() => rt.Expect("stale", 40));
+    }
+
+    [Fact]
+    public void Flush_ingests_delivered_but_unpumped_chunks()
+    {
+        // OnData only enqueues; without the flush-side DrainInbox the chunk would
+        // survive the flush and resurface on the next pump.
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("stale"u8.ToArray());
+        rt.Flush();
+        Assert.Equal("", rt.Wait(20));
+    }
+
+    [Fact]
+    public void Expect_absent_succeeds_on_a_quiet_window_and_keeps_the_buffer()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("all quiet"u8.ToArray());
+        rt.ExpectAbsent("busy", 40);
+        Assert.Equal("all quiet", rt.Expect("quiet", 100));   // window output still feeds later matches
+    }
+
+    [Fact]
+    public void Expect_absent_fails_on_a_hit_with_escaped_evidence()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("bad\rthing busy\r\n"u8.ToArray());
+        var ex = Assert.Throws<ScriptError>(() => rt.ExpectAbsent("busy", 500));
+        Assert.Contains("'busy' appeared", ex.Message);
+        Assert.Contains("bad\\rthing", ex.Message);   // evidence escaped like the timeout tail
+    }
+
+    [Fact]
+    public void Expect_absent_evidence_is_capped_at_80_chars()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed(new byte[] { 0x02 }.Concat(Enumerable.Repeat((byte)'a', 100)).Concat("busy"u8.ToArray()).ToArray());
+        var ex = Assert.Throws<ScriptError>(() => rt.ExpectAbsent("busy", 500));
+        // matched = 100 a's + "busy"; the last-80 window holds 76 a's, and the cut-off head stays out
+        Assert.Contains(new string('a', 76), ex.Message);
+        Assert.DoesNotContain(new string('a', 77), ex.Message);
+        Assert.DoesNotContain("\\x02", ex.Message);
+    }
+
+    [Fact]
+    public void Expect_absent_consumes_through_the_match_end_on_a_hit()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("xx busy yy"u8.ToArray());
+        Assert.Throws<ScriptError>(() => rt.ExpectAbsent("busy", 500));
+        Assert.Equal(" yy", rt.Expect("yy", 100));
+    }
+
+    [Fact]
+    public void Expect_absent_reports_cancellation_instead_of_absence()
+    {
+        var rt = MakeRuntime(new TestRttTransport());
+        rt.RequestCancel();
+        var ex = Assert.Throws<ScriptError>(() => rt.ExpectAbsent("x", 5000));
+        Assert.Contains("cancel", ex.Message);
+    }
+
+    [Fact]
+    public void Expect_any_picks_the_earliest_match_end()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("err=bad then done"u8.ToArray());
+        // "err=bad" completes first in the stream even though listed second
+        var (index, text) = rt.ExpectAny(["done", "err=bad"], 100);
+        Assert.Equal(1, index);
+        Assert.Equal("err=bad", text);
+    }
+
+    [Fact]
+    public void Expect_any_breaks_ties_by_list_order()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("abc"u8.ToArray());
+        // all three match through position 3; the strictly-smaller rule keeps the first listed
+        var (index, text) = rt.ExpectAny(["abc", "a[c]", "abc"], 100);
+        Assert.Equal(0, index);
+        Assert.Equal("abc", text);
+    }
+
+    [Fact]
+    public void Expect_any_consumes_through_the_winner_end_only()
+    {
+        var t = new TestRttTransport();
+        var rt = MakeRuntime(t);
+        t.Feed("err=bad tail then done"u8.ToArray());
+        var (index, text) = rt.ExpectAny(["done", "err=bad"], 100);
+        Assert.Equal(1, index);
+        Assert.Equal("err=bad", text);
+        Assert.Equal(" tail then done", rt.Expect("done", 100));
+    }
+
+    [Fact]
+    public void Expect_any_times_out_with_the_buffer_tail()
+    {
+        var rt = MakeRuntime(new TestRttTransport());
+        var ex = Assert.Throws<ScriptError>(() => rt.ExpectAny(["a", "b"], 40));
+        Assert.Contains("none of 2 patterns matched", ex.Message);
+        Assert.Contains("buffer tail:", ex.Message);
+    }
+
+    [Fact]
+    public void Expect_any_validates_the_pattern_list()
+    {
+        var rt = MakeRuntime(new TestRttTransport());
+        Assert.Contains("no patterns", Assert.Throws<ScriptError>(() => rt.ExpectAny([], 40)).Message);
+        Assert.Contains("pattern #2 is empty", Assert.Throws<ScriptError>(() => rt.ExpectAny(["x", ""], 40)).Message);
+    }
+
     [Fact]
     public void Expect_honors_an_injected_pattern_matcher()
     {
@@ -191,7 +341,7 @@ public class ScriptRuntimeTests
         // regex stands in for the real Lua engine, pinning consumption through the match end.
         var t = new TestRttTransport();
         var rt = MakeRuntime(t);
-        rt.PatternMatcher = (region, pattern) =>
+        rt.PatternMatcher = (region, pattern, _) =>
         {
             var m = System.Text.RegularExpressions.Regex.Match(region, pattern);
             return m.Success ? m.Index + m.Length : null;
@@ -206,7 +356,7 @@ public class ScriptRuntimeTests
     {
         // null = "not yet", not "failed": the pump keeps waiting for more data.
         var rt = MakeRuntime(new TestRttTransport());
-        rt.PatternMatcher = (_, _) => null;
+        rt.PatternMatcher = (_, _, _) => null;
         var ex = Assert.Throws<ScriptError>(() => rt.Expect("x", 40));
         Assert.Contains("not found", ex.Message);
     }

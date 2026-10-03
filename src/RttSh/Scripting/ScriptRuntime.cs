@@ -136,23 +136,93 @@ internal sealed class ScriptRuntime
         return text;
     }
 
-    public string Expect(string pattern, int timeoutMs)
+    public string Expect(string pattern, int timeoutMs) =>
+        Expect(pattern, timeoutMs, throwOnTimeout: true, what: "expect");
+
+    /// <summary>The consuming matcher. With throwOnTimeout the timeout raises a
+    /// ScriptError naming what; otherwise it raises ScriptSoftTimeout with the
+    /// same message. Link failure and cancellation raise in both modes - only
+    /// the pure timeout softens.</summary>
+    public string Expect(string pattern, int timeoutMs, bool throwOnTimeout, string what)
     {
         ThrowLinkError();
         CheckWatchdog();
-        if (pattern.Length == 0) throw new ScriptError("expect: empty pattern");
-        PumpUntil(() => MatchEnd(Region(), pattern) is not null, timeoutMs);
+        if (pattern.Length == 0) throw new ScriptError($"{what}: empty pattern");
+        PumpUntil(() => MatchEnd(Region(), pattern, what) is not null, timeoutMs);
         string region = Region();
-        int? end = MatchEnd(region, pattern);
+        int? end = MatchEnd(region, pattern, what);
         if (end is null)
         {
             if (_linkError is not null) throw new ScriptError($"link failed: {_linkError.Message}");
-            if (_cancelRequested) throw new ScriptError($"expect: cancelled before '{pattern}' arrived");
-            throw new ScriptError($"expect: '{pattern}' not found within {timeoutMs} ms; buffer tail: \"{DescribeTail()}\"");
+            if (_cancelRequested) throw new ScriptError($"{what}: cancelled before '{pattern}' arrived");
+            string message = $"{what}: '{pattern}' not found within {timeoutMs} ms; buffer tail: \"{DescribeTail()}\"";
+            if (throwOnTimeout) throw new ScriptError(message);
+            throw new ScriptSoftTimeout(message);
         }
         string result = region[..end.Value];
         ConsumeThrough(_scanPos + end.Value);
         return result;
+    }
+
+    /// <summary>The negative assertion: succeeds exactly when Expect with the same
+    /// arguments would time out. A hit consumes through the match end and raises
+    /// with the escaped match evidence; a quiet window leaves the buffer untouched,
+    /// so output received during it still feeds later matches. An early pump wake
+    /// (link failure, cancellation) must never read as absence.</summary>
+    public void ExpectAbsent(string pattern, int timeoutMs)
+    {
+        ThrowLinkError();
+        CheckWatchdog();
+        if (pattern.Length == 0) throw new ScriptError("expect_absent: empty pattern");
+        PumpUntil(() => MatchEnd(Region(), pattern, "expect_absent") is not null, timeoutMs);
+        string region = Region();
+        int? end = MatchEnd(region, pattern, "expect_absent");
+        if (end is not null)
+        {
+            string matched = region[..end.Value];
+            ConsumeThrough(_scanPos + end.Value);
+            string evidence = matched.Length > 80 ? matched[^80..] : matched;
+            throw new ScriptError($"expect_absent: '{pattern}' appeared: \"{Escape(evidence)}\"");
+        }
+        if (_linkError is not null) throw new ScriptError($"link failed: {_linkError.Message}");
+        if (_cancelRequested) throw new ScriptError("expect_absent: cancelled before the window elapsed");
+    }
+
+    /// <summary>Waits until any pattern matches and consumes through the earliest
+    /// match end (ties keep the listed order - both complete within the same pump
+    /// slice, so list order is the only fair tiebreak). Returns the 0-based winner
+    /// index and the consumed text; the shim derives match + captures from the
+    /// winning pattern.</summary>
+    public (int Index, string Text) ExpectAny(IReadOnlyList<string> patterns, int timeoutMs)
+    {
+        ThrowLinkError();
+        CheckWatchdog();
+        if (patterns.Count == 0) throw new ScriptError("expect_any: no patterns");
+        for (int i = 0; i < patterns.Count; i++)
+        {
+            if (patterns[i].Length == 0)
+                throw new ScriptError($"expect_any: pattern #{i + 1} is empty");
+        }
+        PumpUntil(() => { string r = Region(); return patterns.Any(p => MatchEnd(r, p, "expect_any") is not null); }, timeoutMs);
+        string region = Region();
+        int winner = -1;
+        int bestEnd = int.MaxValue;
+        for (int i = 0; i < patterns.Count; i++)
+        {
+            if (MatchEnd(region, patterns[i], "expect_any") is int end && end < bestEnd)
+            {
+                bestEnd = end;   // strictly smaller replaces: ties keep the earlier pattern
+                winner = i;
+            }
+        }
+        if (winner < 0)
+        {
+            if (_linkError is not null) throw new ScriptError($"link failed: {_linkError.Message}");
+            if (_cancelRequested) throw new ScriptError("expect_any: cancelled before any pattern matched");
+            throw new ScriptError($"expect_any: none of {patterns.Count} patterns matched within {timeoutMs} ms; buffer tail: \"{DescribeTail()}\"");
+        }
+        ConsumeThrough(_scanPos + bestEnd);
+        return (winner, region[..bestEnd]);
     }
 
     public void Sleep(int ms)
@@ -167,6 +237,17 @@ internal sealed class ScriptRuntime
     {
         ExitCode = code;
         throw new ScriptExitSignal(code);
+    }
+
+    /// <summary>Consumes and discards everything received and not yet matched -
+    /// stale output must not feed a later Expect. Drains first: delivered-but-
+    /// unpumped chunks count as received.</summary>
+    public void Flush()
+    {
+        ThrowLinkError();
+        CheckWatchdog();
+        DrainInbox();
+        ConsumeThrough(_pending.Length);
     }
 
     // ---- memory & core control (the rtt.mem_* / halt API, single script thread only) ------
@@ -328,14 +409,19 @@ internal sealed class ScriptRuntime
         }
     }
 
-    /// <summary>Last ≤80 chars of the pending buffer, control characters and backslashes escaped -
-    /// escaping the introducer too keeps this invertible, so a literal "\n" can never be mistaken
-    /// for a real newline. "What did the pending buffer actually contain" is the first thing a
-    /// failing pattern needs.</summary>
+    /// <summary>Last ≤80 chars of the pending buffer - "what did the pending buffer
+    /// actually contain" is the first thing a failing pattern needs.</summary>
     private string DescribeTail()
     {
         int start = Math.Max(0, _pending.Length - 80);
-        string tail = _pending.ToString(start, _pending.Length - start);
+        return Escape(_pending.ToString(start, _pending.Length - start));
+    }
+
+    /// <summary>Control characters and backslashes escaped - escaping the introducer
+    /// too keeps this invertible, so a literal "\n" can never be mistaken for a real
+    /// newline. Shared by the timeout tail and the expect_absent hit evidence.</summary>
+    private static string Escape(string tail)
+    {
         var sb = new StringBuilder(tail.Length + 16);
         foreach (char c in tail)
             switch (c)
@@ -355,19 +441,20 @@ internal sealed class ScriptRuntime
 
     /// <summary>Locates <paramref name="pattern"/> in the scan region. null = the default
     /// (engine-free) literal ordinal search; LuaScriptHost installs Lua's own matcher here so
-    /// expect() honors full Lua pattern syntax. Only touched from the script thread - same
-    /// thread that owns the Lua state (see LuaScriptHost).</summary>
-    public Func<string, string, int?>? PatternMatcher { get; set; }
+    /// expect() honors full Lua pattern syntax. what names the calling rtt.* entry so a
+    /// malformed pattern's error points at the name the script wrote. Only touched from the
+    /// script thread - same thread that owns the Lua state (see LuaScriptHost).</summary>
+    public Func<string, string, string, int?>? PatternMatcher { get; set; }
 
     /// <summary>The 0-based end of the match (== chars to consume), or null when absent.</summary>
-    private int? MatchEnd(string region, string pattern)
+    private int? MatchEnd(string region, string pattern, string what)
     {
         if (PatternMatcher is null)
         {
             int idx = region.IndexOf(pattern, StringComparison.Ordinal);
             return idx < 0 ? null : idx + pattern.Length;
         }
-        return PatternMatcher(region, pattern);
+        return PatternMatcher(region, pattern, what);
     }
 
     /// <summary>Pumps events until the predicate holds, the timeout elapses, the link fails or

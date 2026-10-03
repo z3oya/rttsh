@@ -52,6 +52,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Lua shim (the rtt.* table) as an assembly resource: rtt_shim.lua is
+         the single source, also included by the Rust tests via include_str!. -->
+    <EmbeddedResource Include="Scripting\rtt_shim.lua" LogicalName="RttSh.Scripting.rtt_shim.lua" />
+  </ItemGroup>
+
+  <ItemGroup>
     <InternalsVisibleTo Include="rttsh.tests" />
   </ItemGroup>
 

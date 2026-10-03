@@ -45,111 +45,17 @@ internal sealed class LuaScriptHost
         };
     }
 
-    /// <summary>The rtt table the script sees: every entry validates its arguments
-    /// Lua-side (so messages point at the rtt.* name the script wrote) and checks
-    /// the host callback status, raising CB_ERR payloads as errors at level 0;
-    /// protect() re-raises with the caller's position. rtt.exit is deliberately
-    /// unprotected - it raises the __rtt_exit= sentinel that unwinds to the top
-    /// level. Keep in sync with the Rust test fixture (SHIM in native/rttsh-lua) -
-    /// the host tests pin the shared behavior.</summary>
-    private const string Shim = """
-        local function protect(fn)
-            return function(...)
-                local ok, res = pcall(fn, ...)
-                if not ok then error(res, 2) end
-                return res
-            end
-        end
-        local function floor_arg(v, message)
-            local n = tonumber(v)
-            if n == nil then error(message, 0) end
-            return math.floor(n)
-        end
-        rtt = {
-            send = protect(function(text)
-                local st, msg = HOST_send(text)
-                if st ~= 0 then error(msg, 0) end
-            end),
-            send_hex = protect(function(hex)
-                local st, msg = HOST_send_hex(hex)
-                if st ~= 0 then error(msg, 0) end
-            end),
-            log = protect(function(line)
-                local st, msg = HOST_log(tostring(line))
-                if st ~= 0 then error(msg, 0) end
-            end),
-            wait = protect(function(ms)
-                if ms == nil then error('wait: missing timeout in ms', 0) end
-                local st, res = HOST_wait(math.floor(ms))
-                if st ~= 0 then error(res, 0) end
-                return res
-            end),
-            wait_hex = protect(function(ms)
-                if ms == nil then error('wait_hex: missing timeout in ms', 0) end
-                local st, res = HOST_wait_hex(math.floor(ms))
-                if st ~= 0 then error(res, 0) end
-                return res
-            end),
-            expect = protect(function(pattern, timeoutMs)
-                if pattern == nil then error('expect: missing pattern', 0) end
-                local st, res = HOST_expect(pattern, math.floor(timeoutMs or 1000))
-                if st ~= 0 then error(res, 0) end
-                return res
-            end),
-            now = protect(function() return HOST_now() end),
-            sleep = protect(function(ms)
-                local st, msg = HOST_sleep(math.floor(tonumber(ms) or 0))
-                if st ~= 0 then error(msg, 0) end
-            end),
-            exit = function(code)
-                local n = math.floor(tonumber(code) or 0)
-                local st, msg = HOST_exit(n)
-                if st ~= 0 then error(msg, 0) end
-                error('__rtt_exit=' .. n, 0)
-            end,
-            mem_read = protect(function(addr, count, width)
-                if addr == nil then error('mem_read: missing address', 0) end
-                if count == nil then error('mem_read: missing count', 0) end
-                local w = width == nil and 32 or floor_arg(width, 'mem_read: width must be a number')
-                local st, res = HOST_mem_read(floor_arg(addr, 'mem_read: address must be a number'),
-                                             floor_arg(count, 'mem_read: count must be a number'), w)
-                if st ~= 0 then error(res, 0) end
-                return res
-            end),
-            mem_write = protect(function(addr, values, width)
-                if addr == nil then error('mem_write: missing address', 0) end
-                if values == nil then error('mem_write: missing value(s)', 0) end
-                local a = floor_arg(addr, 'mem_write: address must be a number')
-                local w = width == nil and 32 or floor_arg(width, 'mem_write: width must be a number')
-                if type(values) == 'table' then
-                    local n = #values
-                    if n == 0 then return end
-                    local copy = {}
-                    for i = 1, n do
-                        local v = tonumber(values[i])
-                        if v == nil then error('mem_write: value #' .. i .. ' is not a number', 0) end
-                        copy[i] = math.floor(v)
-                    end
-                    local st, msg = HOST_mem_write_table(a, copy, n, w)
-                    if st ~= 0 then error(msg, 0) end
-                    return
-                end
-                local st, msg = HOST_mem_write_one(a, floor_arg(values, 'mem_write: value must be a number or table'), w)
-                if st ~= 0 then error(msg, 0) end
-            end),
-            is_halted = protect(function()
-                local st, v = HOST_is_halted()
-                if st ~= 0 then error(v, 0) end
-                return v
-            end),
-            halt = protect(function()
-                local st, msg = HOST_halt()
-                if st ~= 0 then error(msg, 0) end
-            end),
-            resume = protect(function()
-                local st, msg = HOST_resume()
-                if st ~= 0 then error(msg, 0) end
-            end),
-        }
-        """;
+    /// <summary>The shim source: rtt_shim.lua embedded as an assembly resource,
+    /// shared with the Rust tests via include_str!.</summary>
+    private static readonly string Shim = ReadShim();
+
+    private const string ShimResourceName = "RttSh.Scripting.rtt_shim.lua";
+
+    private static string ReadShim()
+    {
+        using var stream = typeof(LuaScriptHost).Assembly.GetManifestResourceStream(ShimResourceName)
+            ?? throw new InvalidOperationException($"the rtt shim resource is missing from the assembly (expected {ShimResourceName})");
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 }

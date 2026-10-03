@@ -32,7 +32,7 @@ internal static unsafe partial class LuaNative
     internal const int KindExit = 2;
 
     /// <summary>Bumped on FFI shape changes; a mismatched DLL fails fast at Start.</summary>
-    internal const int AbiVersion = 1;
+    internal const int AbiVersion = 2;
 
     [LibraryImport(Library, EntryPoint = "rttsh_lua_abi_version")]
     internal static partial int ProbeAbiVersion();
@@ -68,7 +68,8 @@ internal static unsafe partial class LuaNative
 
 /// <summary>The C# host callbacks behind the shim's HOST_* globals — mirrors
 /// <c>HostVTable</c> in native/rttsh-lua/src/lib.rs, field order included.
-/// Every entry returns <see cref="CallbackOk"/>/<see cref="CallbackError"/>
+/// Every entry returns <see cref="HostVTable.CallbackOk"/>/<see cref="HostVTable.CallbackError"/>
+/// (expect also <see cref="HostVTable.CallbackTimeout"/> for the soft timeout)
 /// except Now (pure computation). Out-pairs carry either a value or, on
 /// failure, the error message; the numeric args cross as 64-bit so the C#
 /// side re-validates ranges (neither layer trusts the other's validation).</summary>
@@ -78,13 +79,18 @@ internal unsafe struct HostVTable
     internal const int CallbackOk = 0;
     internal const int CallbackError = 1;
 
+    /// <summary>The soft expect timeout: the out-pair carries the timeout
+    /// message and the shim turns the pair into (nil, msg).</summary>
+    internal const int CallbackTimeout = 2;
+
     internal void* Ctx;
     internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, byte**, nuint*, int> Send;
     internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, byte**, nuint*, int> SendHex;
     internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, byte**, nuint*, int> Log;
     internal delegate* unmanaged[Stdcall]<void*, int, byte**, nuint*, int> Wait;
     internal delegate* unmanaged[Stdcall]<void*, int, byte**, nuint*, int> WaitHex;
-    internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, int, byte**, nuint*, int> Expect;
+    // flags: 0 = hard timeout (CB_ERR), 1 = soft timeout (CB_TIMEOUT with the message)
+    internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, int, int, byte**, nuint*, int> Expect;
     internal delegate* unmanaged[Stdcall]<void*, double> Now;
     internal delegate* unmanaged[Stdcall]<void*, int, byte**, nuint*, int> Sleep;
     internal delegate* unmanaged[Stdcall]<void*, long, byte**, nuint*, int> Exit;
@@ -94,6 +100,19 @@ internal unsafe struct HostVTable
     internal delegate* unmanaged[Stdcall]<void*, int*, byte**, nuint*, int> IsHalted;
     internal delegate* unmanaged[Stdcall]<void*, byte**, nuint*, int> Halt;
     internal delegate* unmanaged[Stdcall]<void*, byte**, nuint*, int> Resume;
+    internal delegate* unmanaged[Stdcall]<void*, byte**, nuint*, int> Flush;
+    internal delegate* unmanaged[Stdcall]<void*, byte*, nuint, int, byte**, nuint*, int> ExpectAbsent;
+    // patterns is `count` NativeByteSlices; index_out is the 0-based winner (i64 out like the mem channels)
+    internal delegate* unmanaged[Stdcall]<void*, NativeByteSlice*, nuint, int, long*, byte**, nuint*, byte**, nuint*, int> ExpectAny;
+}
+
+/// <summary>One element of expect_any's pattern array ({ ptr, len } of a UTF-8
+/// pattern), mirroring ByteSlice in native/rttsh-lua/src/lib.rs.</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal readonly unsafe struct NativeByteSlice
+{
+    internal readonly byte* Ptr;
+    internal readonly nuint Len;
 }
 
 /// <summary>Per-run callback target: the runtime the rtt.* API drives, wrapped
@@ -148,6 +167,9 @@ internal sealed class LuaHostContext
         IsHalted = &IsHaltedTrampoline,
         Halt = &HaltTrampoline,
         Resume = &ResumeTrampoline,
+        Flush = &FlushTrampoline,
+        ExpectAbsent = &ExpectAbsentTrampoline,
+        ExpectAny = &ExpectAnyTrampoline,
     };
 
     // ---- trampolines -------------------------------------------------------------------
@@ -219,15 +241,67 @@ internal sealed class LuaHostContext
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    private static unsafe int ExpectTrampoline(void* ctx, byte* pattern, nuint patternLen, int timeoutMs, byte** outPtr, nuint* outLen)
+    private static unsafe int ExpectTrampoline(void* ctx, byte* pattern, nuint patternLen, int timeoutMs, int flags, byte** outPtr, nuint* outLen)
     {
         *outPtr = null;
         *outLen = 0;
+        // the flags bit names the caller (expect vs try_expect) for messages
+        string what = flags == 0 ? "expect" : "try_expect";
         try
         {
-            return Handover(outPtr, outLen, Ctx(ctx).Runtime.Expect(Decode(pattern, patternLen), timeoutMs));
+            return Handover(outPtr, outLen, Ctx(ctx).Runtime.Expect(Decode(pattern, patternLen), timeoutMs, throwOnTimeout: flags == 0, what));
         }
+        catch (ScriptSoftTimeout ex) { return HandoverMessage(outPtr, outLen, ex.Message, HostVTable.CallbackTimeout); }
         catch (Exception ex) { return Fail(outPtr, outLen, ex); }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static unsafe int FlushTrampoline(void* ctx, byte** msgOut, nuint* msgLenOut)
+    {
+        *msgOut = null;
+        *msgLenOut = 0;
+        try
+        {
+            Ctx(ctx).Runtime.Flush();
+            return HostVTable.CallbackOk;
+        }
+        catch (Exception ex) { return Fail(msgOut, msgLenOut, ex); }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static unsafe int ExpectAbsentTrampoline(void* ctx, byte* pattern, nuint patternLen, int timeoutMs, byte** msgOut, nuint* msgLenOut)
+    {
+        *msgOut = null;
+        *msgLenOut = 0;
+        try
+        {
+            Ctx(ctx).Runtime.ExpectAbsent(Decode(pattern, patternLen), timeoutMs);
+            return HostVTable.CallbackOk;
+        }
+        catch (Exception ex) { return Fail(msgOut, msgLenOut, ex); }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static unsafe int ExpectAnyTrampoline(
+        void* ctx, NativeByteSlice* patterns, nuint count, int timeoutMs, long* indexOut, byte** outPtr, nuint* outLen, byte** msgOut, nuint* msgLenOut)
+    {
+        *indexOut = -1;
+        *outPtr = null;
+        *outLen = 0;
+        *msgOut = null;
+        *msgLenOut = 0;
+        try
+        {
+            int n = Count((long)count, "expect_any");
+            var parsed = new string[n];
+            ReadOnlySpan<NativeByteSlice> span = n > 0 ? new ReadOnlySpan<NativeByteSlice>(patterns, n) : default;
+            for (int i = 0; i < n; i++)
+                parsed[i] = Decode(span[i].Ptr, span[i].Len);
+            (int index, string text) = Ctx(ctx).Runtime.ExpectAny(parsed, timeoutMs);
+            *indexOut = index;
+            return Handover(outPtr, outLen, text);
+        }
+        catch (Exception ex) { return Fail(msgOut, msgLenOut, ex); }
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
@@ -400,16 +474,22 @@ internal sealed class LuaHostContext
 
     /// <summary>Hands the exception message over as the callback's failure
     /// message and reports CallbackError.</summary>
-    private static unsafe int Fail(byte** msgOut, nuint* msgLenOut, Exception error)
+    private static unsafe int Fail(byte** msgOut, nuint* msgLenOut, Exception error) =>
+        HandoverMessage(msgOut, msgLenOut, error.Message, HostVTable.CallbackError);
+
+    /// <summary>Hands a message over with an explicit status - the failure shape
+    /// (CallbackError) and the soft-timeout shape (CallbackTimeout, whose out-pair
+    /// carries the timeout message) share this path.</summary>
+    private static unsafe int HandoverMessage(byte** outPtr, nuint* outLen, string message, int status)
     {
-        int len = Encoding.UTF8.GetByteCount(error.Message);
+        int len = Encoding.UTF8.GetByteCount(message);
         byte* buffer = len == 0 ? null : LuaNative.Alloc((nuint)len);
         if (buffer is null)
-            return HostVTable.CallbackError; // the message degrades to empty
-        CopyUtf8(buffer, error.Message, len);
-        *msgOut = buffer;
-        *msgLenOut = (nuint)len;
-        return HostVTable.CallbackError;
+            return status; // the message degrades to empty
+        CopyUtf8(buffer, message, len);
+        *outPtr = buffer;
+        *outLen = (nuint)len;
+        return status;
     }
 
     private static unsafe void CopyUtf8(byte* buffer, string text, int len)
@@ -507,9 +587,9 @@ internal sealed unsafe class LuaNativeSession : IDisposable
     }
 
     /// <summary>The PatternMatcher entry: the 0-based end of the match (==
-    /// chars to consume), or null when absent. Malformed patterns throw
-    /// ScriptError.</summary>
-    public unsafe int? FindEnd(string region, string pattern)
+    /// chars to consume), or null when absent. what names the calling rtt.*
+    /// entry so a malformed pattern's error points at the name the script wrote.</summary>
+    public unsafe int? FindEnd(string region, string pattern, string what)
     {
         EnsureAlive();
         byte[] regionBytes = Encoding.UTF8.GetBytes(region);
@@ -519,7 +599,7 @@ internal sealed unsafe class LuaNativeSession : IDisposable
         nuint msgLen = 0;
         int rc = LuaNative.Find(_context.Handle, regionBytes, (nuint)regionBytes.Length, patternBytes, (nuint)patternBytes.Length, &end, &msg, &msgLen);
         if (rc == HostVTable.CallbackError)
-            throw new ScriptError($"expect: {TakeStringAndFree(msg, msgLen)}");
+            throw new ScriptError($"{what}: {TakeStringAndFree(msg, msgLen)}");
         if (rc != LuaNative.Ok)
             throw new InvalidOperationException($"rttsh_lua_find failed (status {rc})");
         return end <= 0 ? null : end;

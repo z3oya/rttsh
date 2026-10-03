@@ -8,6 +8,11 @@ internal class ScriptError(string message) : Exception(message);
 /// <summary>Raised at rtt.* call boundaries when --script-timeout is exceeded.</summary>
 internal sealed class ScriptTimeoutError(string message) : ScriptError(message);
 
+/// <summary>The soft expect timeout: Expect(throwOnTimeout: false) throws this
+/// signal with the timeout message; the expect trampoline hands it over as
+/// CB_TIMEOUT and the shim returns (nil, msg). Expect never returns null.</summary>
+internal sealed class ScriptSoftTimeout(string message) : ScriptError(message);
+
 /// <summary>Control-flow signal behind rtt.exit(code). ScriptRuntime.Exit throws it
 /// and records ExitCode; the C# exit trampoline catches it and reports success, and
 /// the Lua shim then raises the error("__rtt_exit=<code>", 0) sentinel that unwinds

@@ -33,9 +33,13 @@ pub const ERR_INTERNAL: i32 = -3;
 /// Host-callback status: [`CB_OK`] = done, [`CB_ERR`] = failed with the message
 /// in the entry's msg out-pair (or, for wait/wait_hex/expect, in the same
 /// out-pair that would have carried the string value). The shim turns status 1
-/// into a Lua error carrying that message.
+/// into a Lua error carrying that message. [`CB_TIMEOUT`] = the call completed
+/// but produced "no result" - the soft expect timeout; the out-pair carries the
+/// timeout message (what prefix + buffer tail) and the shim turns the pair into
+/// (nil, msg). read_line rides the same soft path via expect(flags=1).
 pub const CB_OK: i32 = 0;
 pub const CB_ERR: i32 = 1;
+pub const CB_TIMEOUT: i32 = 2;
 
 /// do_string's *kind_out: the chunk ran (KIND_OK), failed with a message
 /// (KIND_ERROR), or unwound on the rtt.exit sentinel (KIND_EXIT, with the
@@ -50,7 +54,16 @@ pub const EXIT_SENTINEL: &str = "__rtt_exit=";
 
 /// Bumped when the FFI surface changes shape; the C# facade refuses to run
 /// against a mismatched DLL.
-pub const ABI_VERSION: i32 = 1;
+pub const ABI_VERSION: i32 = 2;
+
+/// One element of expect_any's pattern array — `{ ptr, len }` of a UTF-8
+/// pattern, mirroring `NativeByteSlice` in LuaNative.cs. The strings stay
+/// owned by the Rust Vec for the call's duration; nothing is freed here.
+#[repr(C)]
+pub struct ByteSlice {
+    pub ptr: *const u8,
+    pub len: usize,
+}
 
 /// The C# host callbacks behind the shim's HOST_* globals. Every entry returns
 /// [`CB_OK`]/[`CB_ERR`] except `now` (pure computation, infallible). Out-pairs
@@ -75,8 +88,10 @@ pub struct HostVTable {
     pub wait: unsafe extern "C" fn(ctx: *mut c_void, timeout_ms: i32, out: *mut *mut u8, out_len: *mut usize) -> i32,
     pub wait_hex: unsafe extern "C" fn(ctx: *mut c_void, timeout_ms: i32, out: *mut *mut u8, out_len: *mut usize) -> i32,
     /// Consume through the first match of pattern; the out-pair returns the
-    /// matched text (ok) or the failure message (err).
-    pub expect: unsafe extern "C" fn(ctx: *mut c_void, pattern: *const u8, pattern_len: usize, timeout_ms: i32, out: *mut *mut u8, out_len: *mut usize) -> i32,
+    /// matched text (ok), the timeout message (CB_TIMEOUT, flags = 1) or the
+    /// failure message (err). flags: 0 = hard timeout (CB_ERR), 1 = soft
+    /// timeout (CB_TIMEOUT) - the shim's try_expect / read_line path.
+    pub expect: unsafe extern "C" fn(ctx: *mut c_void, pattern: *const u8, pattern_len: usize, timeout_ms: i32, flags: i32, out: *mut *mut u8, out_len: *mut usize) -> i32,
     /// Milliseconds since the script started; cannot fail.
     pub now: unsafe extern "C" fn(ctx: *mut c_void) -> f64,
     pub sleep: unsafe extern "C" fn(ctx: *mut c_void, ms: i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
@@ -93,6 +108,14 @@ pub struct HostVTable {
     pub is_halted: unsafe extern "C" fn(ctx: *mut c_void, out: *mut i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
     pub halt: unsafe extern "C" fn(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
     pub resume: unsafe extern "C" fn(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
+    /// Consume and discard everything received and not yet matched.
+    pub flush: unsafe extern "C" fn(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
+    /// Succeed (CB_OK) only if pattern stays absent for the whole window; a hit
+    /// consumes through the match end and fails with the evidence message.
+    pub expect_absent: unsafe extern "C" fn(ctx: *mut c_void, pattern: *const u8, pattern_len: usize, timeout_ms: i32, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
+    /// `patterns` is `count` ByteSlices; index_out is the 0-based winner, the
+    /// out-pair the consumed text (ok) or the failure message (err).
+    pub expect_any: unsafe extern "C" fn(ctx: *mut c_void, patterns: *const ByteSlice, count: usize, timeout_ms: i32, index_out: *mut i64, out: *mut *mut u8, out_len: *mut usize, msg: *mut *mut u8, msg_len: *mut usize) -> i32,
 }
 
 /// Copyable view of the vtable handed to `rttsh_lua_create`, captured by every
@@ -289,15 +312,80 @@ fn register_host(lua: &Lua, host: Host) -> mlua::Result<()> {
 
     globals.set(
         "HOST_expect",
-        lua.create_function(move |lua, (pattern, timeout): (String, i32)| {
+        lua.create_function(move |lua, (pattern, timeout, flags): (String, i32, i32)| {
             let (st, ptr, len) = unsafe {
                 let mut out: *mut u8 = std::ptr::null_mut();
                 let mut out_len: usize = 0;
-                let st = ((*host.0).expect)((*host.0).ctx, pattern.as_ptr(), pattern.len(), timeout, &mut out, &mut out_len);
+                let st = ((*host.0).expect)((*host.0).ctx, pattern.as_ptr(), pattern.len(), timeout, flags, &mut out, &mut out_len);
                 (st, out, out_len)
             };
             let text = unsafe { take_handover(ptr, len) };
             Ok((st, Value::String(lua.create_string(text)?)))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_flush",
+        lua.create_function(move |lua, ()| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).flush)((*host.0).ctx, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_expect_absent",
+        lua.create_function(move |lua, (pattern, timeout): (String, i32)| {
+            let (st, ptr, len) = unsafe {
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).expect_absent)((*host.0).ctx, pattern.as_ptr(), pattern.len(), timeout, &mut msg, &mut msg_len);
+                (st, msg, msg_len)
+            };
+            let msg = unsafe { take_handover(ptr, len) };
+            Ok((st, msg_or_nil(lua, st, &msg)?))
+        })?,
+    )?;
+
+    globals.set(
+        "HOST_expect_any",
+        lua.create_function(move |lua, (patterns, timeout): (Table, i32)| {
+            // the extracted Vec owns the pattern strings for the call's duration
+            let items: Vec<String> = patterns.sequence_values::<String>().collect::<mlua::Result<_>>()?;
+            let slices: Vec<ByteSlice> = items
+                .iter()
+                .map(|s| ByteSlice { ptr: s.as_ptr(), len: s.len() })
+                .collect();
+            let (st, ptr, len, mptr, mlen, index) = unsafe {
+                let mut index: i64 = -1;
+                let mut out: *mut u8 = std::ptr::null_mut();
+                let mut out_len: usize = 0;
+                let mut msg: *mut u8 = std::ptr::null_mut();
+                let mut msg_len: usize = 0;
+                let st = ((*host.0).expect_any)(
+                    (*host.0).ctx,
+                    slices.as_ptr(),
+                    slices.len(),
+                    timeout,
+                    &mut index,
+                    &mut out,
+                    &mut out_len,
+                    &mut msg,
+                    &mut msg_len,
+                );
+                (st, out, out_len, msg, msg_len, index)
+            };
+            if st == CB_OK {
+                let text = unsafe { take_handover(ptr, len) };
+                return Ok((st, Value::String(lua.create_string(text)?), index));
+            }
+            let msg = unsafe { take_handover(mptr, mlen) };
+            Ok((st, Value::String(lua.create_string(msg)?), index))
         })?,
     )?;
 
@@ -654,109 +742,10 @@ mod tests {
 
     use super::*;
 
-    /// Test fixture mirroring the shim the C# host installs (the production
-    /// copy lives in LuaScriptHost.cs — keep in sync; the C# host tests pin
-    /// the shared behavior).
-    const SHIM: &str = r#"
-local function protect(fn)
-    return function(...)
-        local ok, res = pcall(fn, ...)
-        if not ok then error(res, 2) end
-        return res
-    end
-end
-local function floor_arg(v, message)
-    local n = tonumber(v)
-    if n == nil then error(message, 0) end
-    return math.floor(n)
-end
-rtt = {
-    send = protect(function(text)
-        local st, msg = HOST_send(text)
-        if st ~= 0 then error(msg, 0) end
-    end),
-    send_hex = protect(function(hex)
-        local st, msg = HOST_send_hex(hex)
-        if st ~= 0 then error(msg, 0) end
-    end),
-    log = protect(function(line)
-        local st, msg = HOST_log(tostring(line))
-        if st ~= 0 then error(msg, 0) end
-    end),
-    wait = protect(function(ms)
-        if ms == nil then error('wait: missing timeout in ms', 0) end
-        local st, res = HOST_wait(math.floor(ms))
-        if st ~= 0 then error(res, 0) end
-        return res
-    end),
-    wait_hex = protect(function(ms)
-        if ms == nil then error('wait_hex: missing timeout in ms', 0) end
-        local st, res = HOST_wait_hex(math.floor(ms))
-        if st ~= 0 then error(res, 0) end
-        return res
-    end),
-    expect = protect(function(pattern, timeoutMs)
-        if pattern == nil then error('expect: missing pattern', 0) end
-        local st, res = HOST_expect(pattern, math.floor(timeoutMs or 1000))
-        if st ~= 0 then error(res, 0) end
-        return res
-    end),
-    now = protect(function() return HOST_now() end),
-    sleep = protect(function(ms)
-        local st, msg = HOST_sleep(math.floor(tonumber(ms) or 0))
-        if st ~= 0 then error(msg, 0) end
-    end),
-    exit = function(code)
-        local n = math.floor(tonumber(code) or 0)
-        local st, msg = HOST_exit(n)
-        if st ~= 0 then error(msg, 0) end
-        error('__rtt_exit=' .. n, 0)
-    end,
-    mem_read = protect(function(addr, count, width)
-        if addr == nil then error('mem_read: missing address', 0) end
-        if count == nil then error('mem_read: missing count', 0) end
-        local w = width == nil and 32 or floor_arg(width, 'mem_read: width must be a number')
-        local st, res = HOST_mem_read(floor_arg(addr, 'mem_read: address must be a number'),
-                                     floor_arg(count, 'mem_read: count must be a number'), w)
-        if st ~= 0 then error(res, 0) end
-        return res
-    end),
-    mem_write = protect(function(addr, values, width)
-        if addr == nil then error('mem_write: missing address', 0) end
-        if values == nil then error('mem_write: missing value(s)', 0) end
-        local a = floor_arg(addr, 'mem_write: address must be a number')
-        local w = width == nil and 32 or floor_arg(width, 'mem_write: width must be a number')
-        if type(values) == 'table' then
-            local n = #values
-            if n == 0 then return end
-            local copy = {}
-            for i = 1, n do
-                local v = tonumber(values[i])
-                if v == nil then error('mem_write: value #' .. i .. ' is not a number', 0) end
-                copy[i] = math.floor(v)
-            end
-            local st, msg = HOST_mem_write_table(a, copy, n, w)
-            if st ~= 0 then error(msg, 0) end
-            return
-        end
-        local st, msg = HOST_mem_write_one(a, floor_arg(values, 'mem_write: value must be a number or table'), w)
-        if st ~= 0 then error(msg, 0) end
-    end),
-    is_halted = protect(function()
-        local st, v = HOST_is_halted()
-        if st ~= 0 then error(v, 0) end
-        return v
-    end),
-    halt = protect(function()
-        local st, msg = HOST_halt()
-        if st ~= 0 then error(msg, 0) end
-    end),
-    resume = protect(function()
-        local st, msg = HOST_resume()
-        if st ~= 0 then error(msg, 0) end
-    end),
-}
-"#;
+    /// The exact shim the C# host installs (src/RttSh/Scripting/rtt_shim.lua,
+    /// embedded there as an assembly resource). The include path escapes the
+    /// package dir on purpose; cargo tracks the file via dep-info.
+    const SHIM: &str = include_str!("../../../src/RttSh/Scripting/rtt_shim.lua");
 
     /// Recording mock the tests route callbacks through.
     struct MockCtx {
@@ -782,6 +771,15 @@ rtt = {
         /// When armed, every status-style entry fails with this message —
         /// exercises the CB_ERR → shim error path.
         fail: Cell<Option<&'static str>>,
+        /// Number of flush calls (flush carries no data itself).
+        flushed: Cell<u32>,
+        /// expect_absent: true = absence succeeds, false = the pattern "appeared".
+        absent_ok: Cell<bool>,
+        /// expect_any hands over (index, text) on success; None = CB_ERR no-match.
+        any_result: RefCell<Option<(i64, String)>>,
+        /// expect: armed = a failed find yields CB_TIMEOUT with this message
+        /// (the soft path); disarmed = a failed find yields CB_OK with "".
+        soft_timeout: Cell<Option<&'static str>>,
     }
 
     impl MockCtx {
@@ -801,6 +799,10 @@ rtt = {
                 region: RefCell::new(String::new()),
                 read_values: RefCell::new(Vec::new()),
                 fail: Cell::new(None),
+                flushed: Cell::new(0),
+                absent_ok: Cell::new(true),
+                any_result: RefCell::new(None),
+                soft_timeout: Cell::new(None),
             }
         }
 
@@ -885,9 +887,11 @@ rtt = {
     }
 
     /// The PatternMatcher shape: re-enters rttsh_lua_find on the same state
-    /// while do_string is still on the stack.
+    /// while do_string is still on the stack. Hands over the matched prefix
+    /// text (what the production Expect returns); with soft_timeout armed, a
+    /// failed find yields CB_TIMEOUT.
     unsafe extern "C" fn mock_expect(
-        ctx: *mut c_void, pattern: *const u8, pattern_len: usize, _timeout: i32, out: *mut *mut u8, out_len: *mut usize,
+        ctx: *mut c_void, pattern: *const u8, pattern_len: usize, _timeout: i32, flags: i32, out: *mut *mut u8, out_len: *mut usize,
     ) -> i32 {
         let c = unsafe { &*(ctx as *const MockCtx) };
         let region = c.region.borrow().clone();
@@ -907,7 +911,15 @@ rtt = {
             )
         };
         if rc == OK {
-            let text = if end <= 0 { String::new() } else { end.to_string() };
+            if end <= 0 {
+                if let Some(m) = c.soft_timeout.get() {
+                    unsafe { handover(out, out_len, m) };
+                    return if flags == 0 { CB_ERR } else { CB_TIMEOUT };
+                }
+                unsafe { handover(out, out_len, "") };
+                return CB_OK;
+            }
+            let text = region[..end as usize].to_string();
             unsafe { handover(out, out_len, &text) };
             return CB_OK;
         }
@@ -918,6 +930,51 @@ rtt = {
         }
         unsafe { handover(out, out_len, "expect: find infra failure") };
         CB_ERR
+    }
+
+    unsafe extern "C" fn mock_flush(ctx: *mut c_void, msg: *mut *mut u8, msg_len: *mut usize) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        c.flushed.set(c.flushed.get() + 1);
+        c.fail_or(msg, msg_len)
+    }
+
+    unsafe extern "C" fn mock_expect_absent(
+        ctx: *mut c_void, _pattern: *const u8, _pattern_len: usize, _timeout: i32, msg: *mut *mut u8, msg_len: *mut usize,
+    ) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        if let Some(m) = c.fail.get() {
+            unsafe { handover(msg, msg_len, m) };
+            return CB_ERR;
+        }
+        if c.absent_ok.get() {
+            return CB_OK;
+        }
+        unsafe { handover(msg, msg_len, "expect_absent: 'busy' appeared: \"busy\"") };
+        CB_ERR
+    }
+
+    unsafe extern "C" fn mock_expect_any(
+        ctx: *mut c_void, _patterns: *const ByteSlice, _count: usize, _timeout: i32, index_out: *mut i64,
+        out: *mut *mut u8, out_len: *mut usize, msg: *mut *mut u8, msg_len: *mut usize,
+    ) -> i32 {
+        let c = unsafe { &*(ctx as *const MockCtx) };
+        if let Some(m) = c.fail.get() {
+            unsafe { *index_out = -1 };
+            unsafe { handover(msg, msg_len, m) };
+            return CB_ERR;
+        }
+        match c.any_result.borrow().clone() {
+            Some((index, text)) => {
+                unsafe { *index_out = index };
+                unsafe { handover(out, out_len, &text) };
+                CB_OK
+            }
+            None => {
+                unsafe { *index_out = -1 };
+                unsafe { handover(msg, msg_len, "expect_any: none matched") };
+                CB_ERR
+            }
+        }
     }
 
     unsafe extern "C" fn mock_mem_read(
@@ -983,6 +1040,9 @@ rtt = {
             is_halted: mock_is_halted,
             halt: mock_halt,
             resume: mock_resume,
+            flush: mock_flush,
+            expect_absent: mock_expect_absent,
+            expect_any: mock_expect_any,
         })
     }
 
@@ -1210,7 +1270,7 @@ rtt = {
             );
             assert_eq!(rc, OK, "{msg}");
             assert_eq!(kind, KIND_OK, "{msg}");
-            assert_eq!(*ctx.log.lock().unwrap(), vec!["[v=1\n]", "v=1\n", "3"]);
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["[v=1\n]", "v=1\n", "off"]);
         });
     }
 
@@ -1241,7 +1301,55 @@ rtt = {
             let (rc, kind, _, msg) = run_script(h, "rtt.log(rtt.expect('o[f][f]'))");
             assert_eq!(rc, OK, "{msg}");
             assert_eq!(kind, KIND_OK, "{msg}");
-            assert_eq!(*ctx.log.lock().unwrap(), vec!["3"]); // 1-based inclusive end == consume count
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["off"]); // the matched prefix text
+        });
+    }
+
+    #[test]
+    fn expect_hands_match_and_captures_as_multiple_values() {
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("async1 #18 accepted".into());
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "local text, m, id = rtt.expect('async1 #(%d+) accepted') \
+                 rtt.log(text) rtt.log(m) rtt.log(id)",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["async1 #18 accepted", "async1 #18 accepted", "18"]);
+        });
+    }
+
+    #[test]
+    fn expect_rejects_non_string_patterns_with_its_own_name() {
+        with_mock(|_, h| {
+            let (rc, kind, _, msg) = run_script(h, "rtt.expect(42)");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("expect: pattern must be a string"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn mem_read_without_count_returns_a_scalar() {
+        with_mock(|ctx, h| {
+            ctx.read_values.replace(vec![0x1234_5678]);
+            let (rc, kind, _, msg) = run_script(h, "rtt.log(rtt.mem_read(0x40000000))");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["305419896"]); // 0x12345678
+            assert_eq!(ctx.last_read.get(), (0x40000000, 1, 32));
+        });
+    }
+
+    #[test]
+    fn set_timeout_reports_a_missing_argument_by_name() {
+        with_mock(|_, h| {
+            let (rc, kind, _, msg) = run_script(h, "rtt.set_timeout()");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("set_timeout: missing timeout in ms"), "got: {msg}");
         });
     }
 
@@ -1254,6 +1362,98 @@ rtt = {
             assert_eq!(rc, OK);
             assert_eq!(kind, KIND_ERROR);
             assert!(msg.contains("malformed"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn try_expect_returns_nil_and_message_on_the_soft_timeout() {
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("nothing here".into());
+            ctx.soft_timeout.set(Some("try_expect: 'nope' not found within 100 ms"));
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "local a, b = rtt.try_expect('nope', 100) \
+                 rtt.log(tostring(a)) rtt.log(b)",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["nil", "try_expect: 'nope' not found within 100 ms"]);
+        });
+    }
+
+    #[test]
+    fn read_line_strips_the_line_ending() {
+        // the mock's region is static (no consumption modeling); sequential
+        // reads are pinned C#-side against the real ScriptRuntime buffer
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("abc\r\ndef".into());
+            let (rc, kind, _, msg) = run_script(h, "rtt.log(rtt.read_line(100))");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["abc"]);
+        });
+        with_mock(|ctx, h| {
+            ctx.handle.set(h);
+            ctx.region.replace("\nrest".into());
+            let (rc, kind, _, msg) = run_script(h, "rtt.log('[' .. rtt.read_line(100) .. ']')");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            // an empty line is "" - distinct from a nil timeout
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["[]"]);
+        });
+    }
+
+    #[test]
+    fn expect_absent_succeeds_on_a_quiet_window_and_fails_on_a_hit() {
+        with_mock(|ctx, h| {
+            ctx.absent_ok.set(true);
+            let (rc, kind, _, msg) = run_script(h, "rtt.expect_absent('busy', 100)");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+
+            ctx.absent_ok.set(false);
+            let (rc, kind, _, msg) = run_script(h, "rtt.expect_absent('busy', 100)");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("appeared"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn expect_any_returns_the_one_based_index_and_the_winner_captures() {
+        with_mock(|ctx, h| {
+            ctx.any_result.replace(Some((1, "ERR: hot".into())));
+            let (rc, kind, _, msg) = run_script(
+                h,
+                "local i, t, m, c = rtt.expect_any(500, 'ok', 'ERR: (%a+)') \
+                 rtt.log(i) rtt.log(t) rtt.log(m) rtt.log(c)",
+            );
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            // index 0-based 1 → shim +1 = 2; m = the whole match, c = the capture
+            assert_eq!(*ctx.log.lock().unwrap(), vec!["2", "ERR: hot", "ERR: hot", "hot"]);
+        });
+    }
+
+    #[test]
+    fn expect_any_rejects_non_string_patterns_with_its_own_name() {
+        with_mock(|_, h| {
+            let (rc, kind, _, msg) = run_script(h, "rtt.expect_any(100, 'ok', 42)");
+            assert_eq!(rc, OK);
+            assert_eq!(kind, KIND_ERROR);
+            assert!(msg.contains("expect_any: pattern #2 must be a string"), "got: {msg}");
+        });
+    }
+
+    #[test]
+    fn flush_records_the_call() {
+        with_mock(|ctx, h| {
+            let (rc, kind, _, msg) = run_script(h, "rtt.flush() rtt.flush()");
+            assert_eq!(rc, OK, "{msg}");
+            assert_eq!(kind, KIND_OK, "{msg}");
+            assert_eq!(ctx.flushed.get(), 2);
         });
     }
 }
