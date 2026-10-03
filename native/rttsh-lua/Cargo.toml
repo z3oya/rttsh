@@ -12,8 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # lua54 + vendored: the Lua 5.4 sources compile statically into the cdylib, so
-# no lua54.dll (nor NLua/KeraLua) ships next to rttsh.exe. 0.10.5 is the line
-# the migration spike validated.
+# no external lua54.dll ships next to rttsh.exe.
 mlua = { version = "0.10.5", features = ["lua54", "vendored"] }
 
 [lints]

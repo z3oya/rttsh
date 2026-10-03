@@ -98,8 +98,7 @@ internal unsafe struct HostVTable
 
 /// <summary>Per-run callback target: the runtime the rtt.* API drives, wrapped
 /// so the static trampolines can route through the GCHandle registry. The mem
-/// validation (Addr/Count/CheckUint) moved here from the NLua-era LuaScriptHost
-/// — same checks, same messages, now guarding the i64 ABI channel.</summary>
+/// validation (Addr/Count/CheckUint) guards the i64 ABI channel here.</summary>
 internal sealed class LuaHostContext
 {
     /// <summary>Routes native callbacks to their session's context.</summary>
@@ -421,7 +420,7 @@ internal sealed class LuaHostContext
         }
     }
 
-    // ---- the 32-bit range checks (moved from the NLua-era LuaScriptHost) ---------------
+    // ---- the 32-bit range checks ---------------------------------------------------------
 
     private static uint Addr(long value, string what) =>
         value is >= 0 and <= uint.MaxValue
@@ -509,7 +508,7 @@ internal sealed unsafe class LuaNativeSession : IDisposable
 
     /// <summary>The PatternMatcher entry: the 0-based end of the match (==
     /// chars to consume), or null when absent. Malformed patterns throw
-    /// ScriptError — the same shape the NLua-era matcher had.</summary>
+    /// ScriptError.</summary>
     public unsafe int? FindEnd(string region, string pattern)
     {
         EnsureAlive();

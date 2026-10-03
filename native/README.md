@@ -16,8 +16,8 @@ all the C# side needs.
   locate) behind `rttsh_elf_native.dll`; the C# facade is
   `src/RttSh.Core/Rtt/Elf/{ElfNative,ElfImage}.cs`.
 - `rttsh-lua` — Lua 5.4 hosting (mlua, lua54 + vendored: the interpreter
-  compiles statically into `rttsh_lua_native.dll`, replacing NLua/KeraLua/
-  lua54.dll) behind the script subcommand; the C# facade is
+  compiles statically into `rttsh_lua_native.dll` — no external Lua DLL)
+  behind the script subcommand; the C# facade is
   `src/RttSh/Scripting/{LuaNative,LuaScriptHost}.cs`.
 
 Conventions (from the C#↔Rust interop study, per crate ABI ladder): `extern "C"`

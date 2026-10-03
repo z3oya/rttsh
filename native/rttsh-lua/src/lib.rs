@@ -1,6 +1,6 @@
 //! rttsh-lua: Lua 5.4 hosting behind a C ABI for rttsh's script subcommand.
 //! mlua (lua54 + vendored) compiles the Lua 5.4 sources statically into
-//! rttsh_lua_native.dll, replacing NLua + KeraLua + lua54.dll. The C# side
+//! rttsh_lua_native.dll. The C# side
 //! (`LuaNative.cs`, RttSh.Scripting) owns the rtt shim, argument validation and
 //! error mapping; this crate owns the state, the HOST_* trampolines and the
 //! string.find re-entrancy point. Conventions from the rttsh-mcp / rttsh-elf
@@ -460,9 +460,7 @@ unsafe fn handover(out: *mut *mut u8, out_len: *mut usize, text: &str) {
 /// mlua's wrapper around conversion failures inside Rust callbacks — the cause
 /// carries the real message. mlua appends the Lua stack traceback to runtime
 /// error messages, so the `__rtt_exit=` sentinel is parsed from the first
-/// line; the traceback stays in the message for diagnostics (NLua's
-/// LuaException also carried it, and the script-facing tests only pin
-/// substrings).
+/// line; the traceback stays in the message for diagnostics.
 fn classify(e: &Error) -> (i32, i64, String) {
     let (kind, code, msg) = match e {
         Error::SyntaxError { message, .. } => (KIND_ERROR, 0, message.clone()),
@@ -657,9 +655,8 @@ mod tests {
     use super::*;
 
     /// Test fixture mirroring the shim the C# host installs (the production
-    /// copy lives in LuaScriptHost.cs from the flip round on — keep in sync;
-    /// the C# host tests pin the shared behavior). Entries whose HOST_* global
-    /// does not exist yet fail only if a test calls them.
+    /// copy lives in LuaScriptHost.cs — keep in sync; the C# host tests pin
+    /// the shared behavior).
     const SHIM: &str = r#"
 local function protect(fn)
     return function(...)

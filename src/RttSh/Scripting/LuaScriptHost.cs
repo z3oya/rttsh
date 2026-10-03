@@ -24,7 +24,7 @@ internal sealed class LuaScriptHost
     /// <summary>Executes the script; returns the exit code (rtt.exit(code) or 0).
     /// A completed script still yields a pcall-swallowed rtt.exit's code through
     /// ExitCode; a failed chunk throws ScriptError carrying the Lua message
-    /// (position + traceback, like the NLua-era LuaException was).</summary>
+    /// (position + traceback).</summary>
     public int Run()
     {
         using var session = LuaNativeSession.Start(_runtime);

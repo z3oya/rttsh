@@ -1,5 +1,4 @@
 using System.Text;
-using RttSh.Core.Rtt;
 using Toolbox.Tools.RttCli.Scripting;
 
 namespace Toolbox.Tests.RttScripting;
@@ -7,9 +6,9 @@ namespace Toolbox.Tests.RttScripting;
 /// <summary>HOST_*-level smoke tests over the native Lua session (no shim): the
 /// P/Invoke plumbing, the GCHandle trampoline routing and the string/i64
 /// handover discipline. Shim behavior — the rtt table, the exit sentinel
-/// unwind, protect/positions — is pinned by LuaScriptHostTests from the flip
-/// round on; the state's own pattern engine is pinned Rust-side (rttsh-lua's
-/// cargo tests) and here top-level via <see cref="LuaNativeSession.FindEnd"/>.</summary>
+/// unwind, protect/positions — is pinned by LuaScriptHostTests; the state's own
+/// pattern engine is pinned Rust-side (rttsh-lua's cargo tests) and here
+/// top-level via <see cref="LuaNativeSession.FindEnd"/>.</summary>
 public class LuaNativeSmokeTests
 {
     private sealed record Harness(LuaNativeSession Session, TestRttTransport Transport, ScriptRuntime Runtime, TestTargetMemory Memory) : IDisposable
