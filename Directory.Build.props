@@ -5,5 +5,6 @@
     <RttshNativeDir>$(MSBuildThisFileDirectory)native\</RttshNativeDir>
     <RttshNativeDll>$(RttshNativeDir)target\release\rttsh_mcp_native.dll</RttshNativeDll>
     <RttshElfNativeDll>$(RttshNativeDir)target\release\rttsh_elf_native.dll</RttshElfNativeDll>
+    <RttshLuaNativeDll>$(RttshNativeDir)target\release\rttsh_lua_native.dll</RttshLuaNativeDll>
   </PropertyGroup>
 </Project>
