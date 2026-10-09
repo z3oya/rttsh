@@ -28,10 +28,10 @@ public class LuaNativeSmokeTests
     [Fact]
     public void Abi_matches_and_a_trivial_chunk_runs()
     {
-        Assert.Equal(LuaNative.AbiVersion, LuaNative.ProbeAbiVersion());
+        Assert.Equal(LuaNativeGen.ABI_VERSION, LuaNativeGen.rttsh_lua_abi_version());
         using var h = Make();
         var (kind, code, message) = h.Session.DoString("return 1", "=t");
-        Assert.Equal(LuaNative.KindOk, kind);
+        Assert.Equal(LuaNativeGen.KIND_OK, kind);
         Assert.Equal(0, code);
         Assert.Null(message);
     }
@@ -50,7 +50,7 @@ public class LuaNativeSmokeTests
         using var h = Make();
         h.Transport.Feed("abc"u8.ToArray());
         var (kind, _, message) = h.Session.DoString("local st, v = HOST_wait(500) error('[' .. v .. ']', 0)", "=t");
-        Assert.Equal(LuaNative.KindError, kind);
+        Assert.Equal(LuaNativeGen.KIND_ERROR, kind);
         Assert.StartsWith("[abc]", message); // mlua appends the Lua traceback
     }
 
@@ -59,7 +59,7 @@ public class LuaNativeSmokeTests
     {
         using var h = Make();
         var (kind, _, _) = h.Session.DoString("HOST_exit(42)", "=t");
-        Assert.Equal(LuaNative.KindOk, kind);
+        Assert.Equal(LuaNativeGen.KIND_OK, kind);
         Assert.Equal(42, h.Runtime.ExitCode);
     }
 
@@ -75,7 +75,7 @@ public class LuaNativeSmokeTests
         var (kind, _, message) = h.Session.DoString(
             "local st, t = HOST_mem_read(0, 3, 32) " +
             "local sum = 0 for i = 1, #t do sum = sum + t[i] end error(sum, 0)", "=t");
-        Assert.Equal(LuaNative.KindError, kind);
+        Assert.Equal(LuaNativeGen.KIND_ERROR, kind);
         Assert.StartsWith("6000000000", message); // mlua appends the Lua traceback
         Assert.Equal(4u, memory.LastAccess);
 
@@ -91,7 +91,7 @@ public class LuaNativeSmokeTests
     {
         using var h = Make();
         var (kind, _, message) = h.Session.DoString("local st, msg = HOST_send_hex('zz') error(msg, 0)", "=t");
-        Assert.Equal(LuaNative.KindError, kind);
+        Assert.Equal(LuaNativeGen.KIND_ERROR, kind);
         Assert.NotNull(message);
         Assert.Contains("send_hex:", message);
     }
@@ -104,5 +104,23 @@ public class LuaNativeSmokeTests
         Assert.Null(h.Session.FindEnd("abc", "zzz", "expect"));
         var ex = Assert.Throws<ScriptError>(() => h.Session.FindEnd("x", "[", "expect"));
         Assert.Contains("malformed", ex.Message);
+    }
+
+    [Fact]
+    public unsafe void HostVTable_layout_matches_the_abi_slot_count()
+    {
+        // ctx + 18 callback slots; catches slot-count drift against the Rust vtable
+        Assert.Equal(sizeof(void*) * 19, sizeof(HostVTable));
+    }
+
+    [Fact]
+    public void Empty_inputs_stay_non_null_across_the_boundary()
+    {
+        // the wait loop probes with an empty region; null must not reach the DLL
+        using var h = Make();
+        Assert.Null(h.Session.FindEnd("", "x", "expect"));
+        var (kind, _, message) = h.Session.DoString("", "=t");
+        Assert.Equal(LuaNativeGen.KIND_OK, kind);
+        Assert.Null(message);
     }
 }

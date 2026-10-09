@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>RttSh.Core</RootNamespace>
-    <!-- ElfNative's [LibraryImport] surface generates unsafe marshaling stubs. -->
+    <!-- ElfNative's facade over the generated P/Invoke surface is pointer-based. -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 

@@ -4,9 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-# cdylib: rttsh_lua_native.dll for the C# facade (LuaNative.cs); rlib: the Lua
-# hosting stays testable from cargo test without touching the FFI surface. The
-# lib name fixes the DLL file name the P/Invoke surface resolves.
+# cdylib: rttsh_lua_native.dll for the C# facade (LuaNative.cs, plus the
+# generated LuaNativeGen.g.cs); rlib: the Lua hosting stays testable from cargo
+# test without touching the FFI surface. The lib name fixes the DLL file name
+# the P/Invoke surface resolves.
 name = "rttsh_lua_native"
 crate-type = ["cdylib", "rlib"]
 
@@ -14,6 +15,9 @@ crate-type = ["cdylib", "rlib"]
 # lua54 + vendored: the Lua 5.4 sources compile statically into the cdylib, so
 # no external lua54.dll ships next to rttsh.exe.
 mlua = { version = "0.10.5", features = ["lua54", "vendored"] }
+
+[build-dependencies]
+csbindgen = "1.9.8"
 
 [lints]
 workspace = true

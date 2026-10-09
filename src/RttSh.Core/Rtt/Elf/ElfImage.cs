@@ -1,16 +1,5 @@
 namespace RttSh.Core.Rtt.Elf;
 
-/// <summary>Load outcome, mirroring the CLI's error ladder. IO failures are deliberately NOT
-/// here - FromFile lets them propagate as exceptions because a missing/unreadable file is a
-/// usage error, while these statuses describe what the bytes themselves are.</summary>
-public enum ElfLoadStatus
-{
-    Ok,
-    NotElf,
-    UnsupportedClass,
-    ParseFailed,
-}
-
 /// <summary>Section metadata for consumers that need where bytes live, not just the bytes
 /// themselves (variable watch will need file offsets to read .data initial values).
 /// HasContents is false for SHT_NOBITS and every other non-PROGBITS type - only those sections

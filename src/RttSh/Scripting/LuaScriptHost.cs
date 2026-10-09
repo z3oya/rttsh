@@ -33,14 +33,14 @@ internal sealed class LuaScriptHost
         _runtime.PatternMatcher = session.FindEnd;
 
         var (shimKind, _, shimMessage) = session.DoString(Shim, "=shim");
-        if (shimKind != LuaNative.KindOk)
+        if (shimKind != LuaNativeGen.KIND_OK)
             throw new InvalidOperationException($"the rtt shim failed to install: {shimMessage}");
 
         var (kind, code, message) = session.DoString(_source, _chunkName);
         return kind switch
         {
-            LuaNative.KindExit => checked((int)code),
-            LuaNative.KindError => throw new ScriptError(message ?? "unknown script error"),
+            LuaNativeGen.KIND_EXIT => checked((int)code),
+            LuaNativeGen.KIND_ERROR => throw new ScriptError(message ?? "unknown script error"),
             _ => _runtime.ExitCode,
         };
     }

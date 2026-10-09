@@ -23,6 +23,9 @@
     <RttshNativeSources Include="$(RttshNativeDir)rttsh-mcp\src\**\*.rs" />
     <RttshNativeSources Include="$(RttshNativeDir)rttsh-elf\src\**\*.rs" />
     <RttshNativeSources Include="$(RttshNativeDir)rttsh-lua\src\**\*.rs" />
+    <RttshNativeSources Include="$(RttshNativeDir)rttsh-lua\build.rs" />
+    <RttshNativeSources Include="$(RttshNativeDir)rttsh-mcp\build.rs" />
+    <RttshNativeSources Include="$(RttshNativeDir)rttsh-elf\build.rs" />
     <Content Include="$(RttshNativeDll)"
              Link="rttsh_mcp_native.dll"
              CopyToOutputDirectory="PreserveNewest"

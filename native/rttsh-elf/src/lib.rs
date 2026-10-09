@@ -30,7 +30,7 @@ pub use lookup::{lookup, Lookup, LookupStatus};
 pub use model::{LoadStatus, ParsedElf, Section, Symbol, SymbolBinding, SymbolKind};
 pub use parse::parse;
 
-/// Status ladder, mirrored by the C# side in `ElfNative.cs`.
+/// Status ladder, generated into `ElfNativeGen.g.cs`.
 pub const OK: i32 = 0;
 pub const ERR_INVALID_HANDLE: i32 = -1;
 pub const ERR_BAD_ARGUMENT: i32 = -2;
@@ -119,6 +119,14 @@ unsafe fn with_image<T>(handle: usize, f: impl FnOnce(&ParsedElf) -> T) -> Optio
 /// which is what makes the `rttsh_elf_free` reconstruction layout-correct.
 /// Appends `name` to the pool and answers the (offset, length) pair the entry
 /// fields record. Entries carry the pair, the pool carries the bytes.
+
+/// Blob/candidate geometry, generated into `ElfNativeGen.g.cs` (the C# decoder
+/// strides over the same numbers).
+pub const BLOB_HEADER_BYTES: i32 = 12;
+pub const BLOB_SYMBOL_ENTRY_BYTES: i32 = 32;
+pub const BLOB_SECTION_ENTRY_BYTES: i32 = 40;
+pub const BLOB_CANDIDATE_ENTRY_BYTES: i32 = 24;
+
 fn add_name(names: &mut Vec<u8>, name: &str) -> (u32, u32) {
     let offset = names.len() as u32;
     names.extend_from_slice(name.as_bytes());
@@ -319,8 +327,12 @@ pub unsafe extern "C" fn rttsh_elf_lookup(
         if result.status == LookupStatus::Ambiguous {
             let slots = cand_cap as usize;
             for (index, symbol) in result.candidates.iter().enumerate().take(slots) {
-                let entry = cand_buf.add(index * 24);
-                std::ptr::copy_nonoverlapping(candidate_entry(symbol).as_ptr(), entry, 24);
+                let entry = cand_buf.add(index * BLOB_CANDIDATE_ENTRY_BYTES as usize);
+                std::ptr::copy_nonoverlapping(
+                    candidate_entry(symbol).as_ptr(),
+                    entry,
+                    BLOB_CANDIDATE_ENTRY_BYTES as usize,
+                );
             }
         }
         *cand_count_out = result.candidates.len() as u32;
@@ -328,8 +340,8 @@ pub unsafe extern "C" fn rttsh_elf_lookup(
     })
 }
 
-fn candidate_entry(symbol: &Symbol) -> [u8; 24] {
-    let mut entry = [0u8; 24];
+fn candidate_entry(symbol: &Symbol) -> [u8; BLOB_CANDIDATE_ENTRY_BYTES as usize] {
+    let mut entry = [0u8; BLOB_CANDIDATE_ENTRY_BYTES as usize];
     entry[0..8].copy_from_slice(&symbol.address.to_le_bytes());
     entry[8..16].copy_from_slice(&symbol.size.to_le_bytes());
     entry[16] = symbol.kind as u8;

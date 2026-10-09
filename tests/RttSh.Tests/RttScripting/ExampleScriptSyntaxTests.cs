@@ -31,7 +31,7 @@ public class ExampleScriptSyntaxTests
         var (kind, _, message) = session.DoString(
             $"local f, err = load([===[{src}]===])\nif not f then error(err, 0) end",
             "@" + Path.GetFileName(path));
-        Assert.True(kind == LuaNative.KindOk, $"{Path.GetFileName(path)}: {message}");
+        Assert.True(kind == LuaNativeGen.KIND_OK, $"{Path.GetFileName(path)}: {message}");
     }
 
     private static string FindTestsDir()

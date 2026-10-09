@@ -3,6 +3,9 @@ name = "rttsh-mcp"
 version.workspace = true
 edition.workspace = true
 
+[build-dependencies]
+csbindgen = "1.9.8"
+
 # The lib name becomes the cdylib file name (rttsh_mcp_native.dll) — keep it in sync
 # with the C# side (McpNative.Library) and the BuildRttshNative MSBuild target.
 [lib]

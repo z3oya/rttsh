@@ -1,10 +1,10 @@
 //! rttsh-lua: Lua 5.4 hosting behind a C ABI for rttsh's script subcommand.
 //! mlua (lua54 + vendored) compiles the Lua 5.4 sources statically into
-//! rttsh_lua_native.dll. The C# side
-//! (`LuaNative.cs`, RttSh.Scripting) owns the rtt shim, argument validation and
-//! error mapping; this crate owns the state, the HOST_* trampolines and the
-//! string.find re-entrancy point. Conventions from the rttsh-mcp / rttsh-elf
-//! FFI discipline:
+//! rttsh_lua_native.dll. The C# side (RttSh.Scripting) owns the rtt shim,
+//! argument validation and error mapping; this crate owns the state, the
+//! HOST_* trampolines and the string.find re-entrancy point. build.rs
+//! generates the P/Invoke declarations (LuaNativeGen.g.cs). Conventions from
+//! the rttsh-mcp / rttsh-elf FFI discipline:
 //!
 //! - every export is `extern "C"`, returns a status code, and never lets a
 //!   panic escape (`catch_unwind` is mandatory — this also means
@@ -24,7 +24,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use mlua::{Error, Function, Lua, MultiValue, Table, Value};
 
-/// Status ladder, mirrored by the C# side in `LuaNative.cs`.
+/// Status ladder, generated into `LuaNativeGen.g.cs`.
 pub const OK: i32 = 0;
 pub const ERR_INVALID_HANDLE: i32 = -1;
 pub const ERR_BAD_ARGUMENT: i32 = -2;
@@ -57,7 +57,7 @@ pub const EXIT_SENTINEL: &str = "__rtt_exit=";
 pub const ABI_VERSION: i32 = 2;
 
 /// One element of expect_any's pattern array — `{ ptr, len }` of a UTF-8
-/// pattern, mirroring `NativeByteSlice` in LuaNative.cs. The strings stay
+/// pattern; generated into `LuaNativeGen.g.cs` under the same name. The strings stay
 /// owned by the Rust Vec for the call's duration; nothing is freed here.
 #[repr(C)]
 pub struct ByteSlice {

@@ -21,6 +21,8 @@ use crate::model::{ParsedElf, SymbolKind};
 /// tool ecosystem (RTT viewers, probe-rs, pyOCD all resolve this name).
 pub const CONTROL_BLOCK_SYMBOL_NAME: &str = "_SEGGER_RTT";
 
+/// Control-block locate outcome. Not generated: the C# twin keeps a
+/// hand-written `InvalidImage` verdict the DLL never produces.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LocateStatus {

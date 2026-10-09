@@ -1,6 +1,7 @@
 //! Domain model: the materialized view of an ELF32 image. FFI carries the enum
-//! values as `u8`/`i32` codes — the discriminants below are the ABI contract with
-//! `ElfSymbolKind`/`ElfSymbolBinding` on the C# side and must not be reordered.
+//! values as `u8`/`i32` codes — the discriminants below are the ABI contract,
+//! generated into `ElfNativeGen.g.cs` (`ElfSymbolKind`/`ElfSymbolBinding`) and
+//! must not be reordered.
 
 /// Symbol classes, mapped from the st_info type nibble in [`crate::parse`].
 /// Unmapped/processor-specific values collapse to `Other` rather than failing.
@@ -90,9 +91,9 @@ pub struct Section {
     pub has_contents: bool,
 }
 
-/// Load outcome, mirroring the C# `ElfLoadStatus` ladder. IO failures are not here -
-/// they never reach the crate (the bytes arrive in memory; missing files are a
-/// caller-side usage error).
+/// Load outcome, generated into `ElfNativeGen.g.cs` as `ElfLoadStatus`. IO
+/// failures are not here - they never reach the crate (the bytes arrive in
+/// memory; missing files are a caller-side usage error).
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LoadStatus {

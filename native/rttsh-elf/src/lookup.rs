@@ -5,9 +5,10 @@
 
 use crate::model::{ParsedElf, Symbol, SymbolKind};
 
-/// Outcome of a by-name lookup, mirroring C# `SymbolLookupStatus` order. NotFound and
-/// Ambiguous are ordinary results, not errors; Ambiguous carries every same-name
-/// candidate (after the kind filter), ordered by address, for diagnostics.
+/// Outcome of a by-name lookup, generated into `ElfNativeGen.g.cs` as
+/// `SymbolLookupStatus`. NotFound and Ambiguous are ordinary results, not errors;
+/// Ambiguous carries every same-name candidate (after the kind filter), ordered
+/// by address, for diagnostics.
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LookupStatus {

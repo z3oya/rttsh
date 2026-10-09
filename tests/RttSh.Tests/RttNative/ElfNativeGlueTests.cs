@@ -27,13 +27,31 @@ public class ElfNativeGlueTests
     public void AbiVersion_Matches()
     {
         ElfNative.EnsureAbi();   // first use fails fast on a missing/mismatched DLL
-        Assert.Equal(ElfNative.AbiVersion, ElfNative.RttshElfAbiVersion());
+        Assert.Equal(ElfNativeGen.ABI_VERSION, ElfNativeGen.rttsh_elf_abi_version());
     }
 
     [Fact]
     public void PanicProbe_Answers_ErrInternal()
     {
-        Assert.Equal(ElfNative.ErrInternal, ElfNative.PanicProbe());
+        Assert.Equal(ElfNativeGen.ErrInternal, ElfNative.PanicProbe());
+    }
+
+    [Fact]
+    public void Generated_enums_keep_the_rust_discriminants()
+    {
+        // a drift would silently reinterpret every status crossing the boundary
+        Assert.Equal(0, (int)ElfLoadStatus.Ok);
+        Assert.Equal(3, (int)ElfLoadStatus.ParseFailed);
+        Assert.Equal(0, (int)SymbolLookupStatus.Found);
+        Assert.Equal(2, (int)SymbolLookupStatus.Ambiguous);
+        Assert.Equal(0, (int)ElfSymbolKind.NotTyped);
+        Assert.Equal(5, (int)ElfSymbolKind.Other);
+        Assert.Equal(0, (int)ElfSymbolBinding.Local);
+        Assert.Equal(2, (int)ElfSymbolBinding.Weak);
+        Assert.Equal(ElfNativeGen.BLOB_HEADER_BYTES, 12);
+        Assert.Equal(ElfNativeGen.BLOB_SYMBOL_ENTRY_BYTES, 32);
+        Assert.Equal(ElfNativeGen.BLOB_SECTION_ENTRY_BYTES, 40);
+        Assert.Equal(ElfNativeGen.BLOB_CANDIDATE_ENTRY_BYTES, 24);
     }
 
     // ---- the load ladder through the facade ---------------------------------------------

@@ -35,7 +35,7 @@ public class McpNativeGlueTests
     [Fact]
     public void AbiVersion_Matches()
     {
-        Assert.Equal(McpNative.AbiVersion, McpNative.RttshMcpAbiVersion());
+        Assert.Equal(McpNativeGen.ABI_VERSION, McpNativeGen.rttsh_mcp_abi_version());
     }
 
     [Fact]
@@ -52,12 +52,14 @@ public class McpNativeGlueTests
     }
 
     [Fact]
-    public void Probe_Response_Drains_In_Chunks()
+    public unsafe void Probe_Response_Drains_In_Chunks()
     {
         using var session = McpNativeSession.Start(ReverseHandler);
         byte[] request = VariedBytes(100);
         byte[] method = "echo"u8.ToArray();
-        int length = McpNative.RttshMcpDispatchProbe(session.Handle, method, (uint)method.Length, request, (uint)request.Length);
+        int length;
+        fixed (byte* methodPtr = method, requestPtr = request)
+            length = McpNativeGen.rttsh_mcp_dispatch_probe(session.Handle, methodPtr, (uint)method.Length, requestPtr, (uint)request.Length);
         Assert.True(length > request.Length, "the envelope should exceed the raw request");
         Assert.Equal(length, session.Wait(1000));
 
@@ -75,7 +77,7 @@ public class McpNativeGlueTests
     /// <summary>Execute-once is structural: the dispatch probe invokes the callback exactly
     /// once per logical call - there is no retry loop that could re-run the handler.</summary>
     [Fact]
-    public void DispatchProbe_Executes_The_Handler_Exactly_Once()
+    public unsafe void DispatchProbe_Executes_The_Handler_Exactly_Once()
     {
         int executions = 0;
         using var session = McpNativeSession.Start((handle, method, request) =>
@@ -86,7 +88,9 @@ public class McpNativeGlueTests
 
         byte[] request = VariedBytes(100);
         byte[] method = "echo"u8.ToArray();
-        int length = McpNative.RttshMcpDispatchProbe(session.Handle, method, (uint)method.Length, request, (uint)request.Length);
+        int length;
+        fixed (byte* methodPtr = method, requestPtr = request)
+            length = McpNativeGen.rttsh_mcp_dispatch_probe(session.Handle, methodPtr, (uint)method.Length, requestPtr, (uint)request.Length);
         Assert.True(length > 0);
         (bool ok, string text) = ParseEnvelope(session.DrainAll());
         Assert.True(ok, text);
@@ -125,7 +129,7 @@ public class McpNativeGlueTests
     [Fact]
     public void Native_Panic_Probe_Surfaces_As_ErrInternal()
     {
-        Assert.Equal(McpNative.ErrInternal, McpNative.RttshMcpPanicProbe());
+        Assert.Equal(McpNativeGen.ErrInternal, McpNativeGen.rttsh_mcp_panic_probe());
         // The panic was contained inside the DLL: the host process keeps working.
         using var session = McpNativeSession.Start(ReverseHandler);
         (bool ok, string text) = ParseEnvelope(session.DispatchProbe("echo", "abc"u8.ToArray()));

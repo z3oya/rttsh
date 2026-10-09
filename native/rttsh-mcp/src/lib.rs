@@ -36,7 +36,7 @@ mod transport;
 use server::RttshMcpHandler;
 use transport::{InboundStream, Outbound, OutboundSink};
 
-/// Status ladder, mirrored by the C# side in `McpNative.cs`.
+/// Status ladder, generated into `McpNativeGen.g.cs`.
 pub const OK: i32 = 0;
 pub const ERR_INVALID_HANDLE: i32 = -1;
 pub const ERR_BAD_ARGUMENT: i32 = -2;
