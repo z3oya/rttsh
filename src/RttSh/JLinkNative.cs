@@ -74,7 +74,10 @@ internal static class JLinkNative
     }
 
     /// <summary>JLINKARM_DEVICE_GetInfo layout (per pylink structs.py): field order is ABI-fixed and the
-    /// DLL validates SizeOfStruct. char* fields are the DLL's own strings - copy out immediately.</summary>
+    /// DLL validates SizeOfStruct. char* fields are the DLL's own strings - copy out immediately.
+    /// FlashSize/RamSize are the DLL's totals over ALL banks incl. external memory-mapped ones
+    /// (sum(FlashAreas)==FlashSize holds across the whole database) - FlashSize is NOT on-chip flash,
+    /// consume it through JLinkDeviceDatabase.PrimaryFlashBytes; RamSize is work RAM, not total SRAM.</summary>
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
     public struct DeviceInfo
     {
